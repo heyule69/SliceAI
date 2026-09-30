@@ -166,6 +166,112 @@ class ReviewRegressionTest(unittest.TestCase):
         with patch('events.cached_api',side_effect=wrong_parent),patch('engine.check_cancel'):
             with self.assertRaises(ValueError):grounded_outline(runner,rows)
 
+    def test_fine_outline_uses_only_source_excerpts_after_invalid_quotes(self):
+        from analysis_budget import grounded_outline
+        from types import SimpleNamespace
+        runner=SimpleNamespace(store=None,task_id='fixture')
+        rows=[{'id':i,'text':f'第{i}段原话，含起因及后续。'} for i in range(50)]
+        requests=[]
+        def invalid(runner,kind,system,payload):
+            requests.append(payload)
+            return {'summary':'改写内容','evidence':[{'id':0,'quote':'模型编写的引文'}]}
+        with patch('engine.check_cancel'):
+            outline=grounded_outline(runner,rows,request=invalid,source_fallback=True)
+        self.assertEqual(outline['method'],'source_excerpts')
+        source={row['id']:row['text'] for row in rows}
+        self.assertTrue(all(item['quote'] in source[item['id']] for item in outline['evidence']))
+        self.assertEqual(outline['evidence'][0]['id'],0)
+        self.assertEqual(outline['evidence'][-1]['id'],49)
+        self.assertTrue(any('ordered_sections' in payload for payload in requests))
+        def failure(*args):raise RuntimeError('provider unavailable')
+        with patch('engine.check_cancel'),self.assertRaises(RuntimeError):
+            grounded_outline(runner,rows,request=failure,source_fallback=True)
+
+    def test_fine_outline_rebinds_only_unique_literal_quotes_in_current_input(self):
+        from analysis_budget import grounded_outline
+        from types import SimpleNamespace
+        runner=SimpleNamespace(store=None,task_id='fixture')
+        rows=[{'id':10,'text':'开端原文。'},{'id':20,'text':'唯一结尾原话。'}]
+        wrong={'summary':'完整经过','evidence':[{'id':1,'quote':'唯一结尾原话'}]}
+        with patch('engine.check_cancel'):
+            outline=grounded_outline(runner,rows,request=lambda *args:wrong,source_fallback=True)
+        self.assertEqual(outline['evidence'],[{'id':20,'quote':'唯一结尾原话'}])
+        self.assertTrue(outline['source_quote_id_repair'])
+        self.assertEqual(wrong['evidence'][0]['id'],1)
+        repeated=[{'id':10,'text':'相同原文'},{'id':20,'text':'相同原文'}]
+        with patch('engine.check_cancel'):
+            ambiguous=grounded_outline(runner,repeated,request=lambda *args:{
+                'summary':'含糊引用','evidence':[{'id':1,'quote':'相同原文'}]},source_fallback=True)
+        self.assertTrue(ambiguous['source_excerpt_fallback'])
+        self.assertNotIn('source_quote_id_repair',ambiguous)
+
+    def test_story_nodes_rebind_only_unique_exact_source_quote(self):
+        from fine_story import build_story
+        from types import SimpleNamespace
+        rows=[{'id':10,'start':0,'end':1,'text':'开端原文'},
+              {'id':20,'start':1,'end':2,'text':'唯一后续原话'}]
+        editor=SimpleNamespace(context=rows,store=None,p={'id':'fixture'},persist=lambda *args:None)
+        def cached(editor,kind,system,payload,validate,**kwargs):
+            self.assertIn('json',system.lower())
+            return validate({'nodes':[{'id':1,'quote':'唯一后续原话','role':'ending'}]})
+        with patch('fine_story.grounded_outline',return_value={'summary':'完整经过','evidence':[]}):
+            story=build_story(editor,cached)
+        self.assertEqual(story['nodes'][0]['id'],20)
+        self.assertTrue(story['nodes'][0]['source_quote_id_repair'])
+        rows[0]['text']='唯一后续原话'
+        with patch('fine_story.grounded_outline',return_value={'summary':'完整经过','evidence':[]}),self.assertRaises(ValueError):
+            build_story(editor,cached)
+
+    def test_invalid_story_nodes_fall_back_to_literal_protected_section(self):
+        from fine_story import build_story
+        from types import SimpleNamespace
+        rows=[{'id':10,'start':0,'end':1,'text':'开端原文'},
+              {'id':20,'start':1,'end':2,'text':'结尾原话'}]
+        editor=SimpleNamespace(context=rows,store=None,p={'id':'fixture'},persist=lambda *args:None)
+        def cached(editor,kind,system,payload,validate,on_invalid=None):
+            bad={'summary':'缺失节点结构'}
+            try:return validate(bad)
+            except ValueError as error:return validate(on_invalid(error,bad))
+        with patch('fine_story.grounded_outline',return_value={'summary':'完整经过','evidence':[]}):
+            story=build_story(editor,cached)
+        self.assertEqual(story['source_excerpt_sections'],[[10,20]])
+        self.assertEqual(story['nodes'],[{'id':10,'quote':'开端原文','role':'source'},
+                                       {'id':20,'quote':'结尾原话','role':'source'}])
+
+    def test_candidate_and_final_prompts_support_provider_json_mode(self):
+        from fine_story import decide,final_review
+        from types import SimpleNamespace
+        rows=[{'id':10,'start':0,'end':1,'text':'原文示例'}]
+        editor=SimpleNamespace(context=rows,persist=lambda *args:None)
+        story={'outline':{'summary':'完整故事'},'nodes':[]}
+        candidate={'id':'row:10','kind':'offtopic','status':'suggested','quote':'原文示例',
+                   'row_ids':[10],'reason':'无关闲聊','evidence':[]}
+        options={'cleanup':['offtopic'],'speech':[]}
+        requests=[]
+        def cached(editor,kind,system,payload,validate,**kwargs):
+            requests.append(kind)
+            self.assertIn('json',system.lower())
+            return validate({'decisions':[{'id':'row:10','action':'keep','reason':'完整故事需要'}]}
+                            if 'judge' in kind else {'restore_ids':[],'reason':'保留完整故事'})
+        decide(editor,[candidate],options,story,cached)
+        final_review(editor,[candidate],options,story,cached)
+        self.assertEqual(len(requests),2)
+
+    def test_failed_final_review_restores_every_unverified_cut(self):
+        from fine_story import final_review
+        from types import SimpleNamespace
+        editor=SimpleNamespace(context=[{'id':10,'start':0,'end':1,'text':'原文示例'}],persist=lambda *args:None)
+        candidates=[{'id':'word:10:0:1:retakes','kind':'retakes','quote':'就','row_ids':[10],
+                     'reason':'前一次重说','evidence':[]}]
+        def cached(editor,kind,system,payload,validate,on_invalid=None):
+            bad={'restore_ids':['不存在的候选'],'reason':'无效编号'}
+            try:return validate(bad)
+            except ValueError as error:return validate(on_invalid(error,bad))
+        result=final_review(editor,candidates,{'speech':['retakes']},
+                            {'outline':{'summary':'完整故事'},'nodes':[]},cached)
+        self.assertEqual(result['restore_ids'],[candidates[0]['id']])
+        self.assertIn('未通过校验',result['reason'])
+
     def test_worker_crash_recovery_preserves_results_and_does_not_interrupt_neighbors(self):
         self.task['status'] = 'transcribing'
         self.store.put(self.task)

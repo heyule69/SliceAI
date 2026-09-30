@@ -47,6 +47,7 @@ globalThis.testBridge = { listeners: [], invoke: async () => {}, open: async () 
 const { bindImportedVideo, sameView, SubtitleDrafts, globalActivity } = await import(pathToFileURL(join(temporary, 'workspace-state.mjs')));
 const { FineWorkspace } = await import(pathToFileURL(join(temporary, 'fine.mjs')));
 const { SegmentPlayer } = await import(pathToFileURL(join(temporary, 'segment-player.mjs')));
+const { cutResult, cutSummaryHtml, cutLedgerHtml, executionOutcome } = await import(pathToFileURL(join(temporary, 'fine-progress.mjs')));
 const cues = [{ id: 1, start: 0, end: 1, text: '原字幕' }];
 const changed = [{ ...cues[0], text: '核对后的字幕' }];
 const project = (id, revision = 1) => ({ id, task_id: `task-${id}`, clip_id: 1,
@@ -169,4 +170,77 @@ test('worker interruption retains drafts and unlocks the current project for ret
   fine.receive({ type: 'error', project_id: 'A', cmd: 'edit_auto', message: 'worker stopped' });
   assert.equal(fine.p.status, 'interrupted'); assert.equal(fine.pending, false);
   assert.deepEqual(fine.cues, changed); assert.equal(fine.wizard, false);
+});
+
+test('zero effective cuts report unchanged duration and the actual blocked decisions', () => {
+  const version = { duration: 429.4, removed_duration: 60, auto_review: { applied_removals: 9 },
+    cut_ledger: [{ id: 'repeat-1', start: 17860, end: 17862, text: '那个那个', reason: '重复表达', status: 'blocked', block_reason: '无法确认字尾，保留原声' },
+      { id: 'filler-2', start: null, end: null, quote: '嗯', reason: '语气词', status: 'blocked', block_reason: '暂时无法定位' }] };
+  const result = cutResult(version, 17853.136, 18282.534);
+  assert.equal(result.unchanged, true); assert.equal(result.removedDuration, 0);
+  assert.equal(result.suggested, 2); assert.equal(result.blocked, 2); assert.equal(result.applied, 0);
+  const html = cutSummaryHtml(version, 17853.136, 18282.534);
+  assert.match(html, /未产生有效精简/); assert.match(html, /实际应用 0 处/);
+  assert.match(html, /无法确认字尾，保留原声/); assert.doesNotMatch(html, /实际精简 60/);
+  assert.match(executionOutcome({ error: '', stage: '', status: 'idle', execution: { state: 'done', command: 'edit_auto' } }, true, result.unchanged), /处理结束/);
+});
+
+test('cut ledger displays source-relative times, escaped quotes, and restores only applied candidates', () => {
+  const version = { duration: 8, cut_ledger: [
+    { id: 'cut<&"1', start: 103, end: 105, text: '<img src=x>就就是', reason: '重复重说', status: 'applied' },
+    { id: 'no-location', start: null, end: null, quote: '那个', reason: '语气词', status: 'blocked', block_reason: '无法定位' },
+    { id: 'already-restored', start: 106, end: 107, text: '后续结局', reason: '用户恢复', status: 'restored' },
+  ] };
+  const result = cutResult(version, 100, 110);
+  assert.equal(result.removedDuration, 2); assert.equal(result.applied, 1); assert.equal(result.blocked, 1);
+  const html = cutLedgerHtml(version, 100);
+  assert.match(html, /00:03.00 — 00:05.00/); assert.match(html, /data-seconds="103"/);
+  assert.match(html, /&lt;img src=x&gt;/); assert.doesNotMatch(html, /<img src=x>/);
+  assert.equal((html.match(/data-fine-action="restore-candidate"/g) || []).length, 1);
+  assert.match(html, /data-candidate="cut&lt;&amp;&quot;1"/); assert.match(html, /暂时无法定位/); assert.match(html, /已恢复/);
+  assert.match(cutLedgerHtml(version, 100, true), /data-candidate="cut&lt;&amp;&quot;1" disabled/);
+});
+
+test('restoring a cut submits the candidate ID and leaves source playback until a new preview is ready', async () => {
+  const fine = workspace(), requests = [];
+  fine.p.versions[0].cut_ledger = [
+    { id: 'repeat-at-3', start: 3, end: 5, text: '就就是', reason: '重复重说', status: 'applied' },
+    { id: 'protected-end', start: 8, end: 9, text: '退钱结局', reason: '保留剧情', status: 'blocked' },
+  ];
+  fine.mode = 'preview'; fine.cues = structuredClone(changed);
+  fine.queue = async (cmd, values) => { requests.push({ cmd, values }); };
+  await fine.action('restore-candidate', { dataset: { candidate: 'repeat-at-3' } });
+  assert.deepEqual(requests, [{ cmd: 'edit_update', values: { restore_candidate_id: 'repeat-at-3' } }]);
+  assert.equal(fine.mode, 'source'); assert.equal(fine.cues, null);
+  await fine.action('restore-candidate', { dataset: { candidate: 'protected-end' } });
+  await fine.action('restore-candidate', { dataset: { candidate: 'missing-cut' } });
+  assert.equal(requests.length, 1);
+  fine.p.versions[0].cut_ledger[0].status = 'restored';
+  await fine.action('restore-candidate', { dataset: { candidate: 'repeat-at-3' } });
+  assert.equal(requests.length, 1);
+});
+
+test('a reviewed keep decision is retained without a misleading pending action or restore button', () => {
+  const version = { duration: 10, cut_ledger: [
+    { id: 'story-ending', start: 103, end: 105, text: '后续结局', reason: '故事的回应需要保留', kind: 'semantic', status: 'suggested', decision: 'keep' },
+  ] };
+  const html = cutLedgerHtml(version, 100);
+  assert.match(html, /已保留/); assert.doesNotMatch(html, /待处理|restore-candidate/);
+  const legacy = { duration: 10, cut_ledger: [{ ...version.cut_ledger[0], decision: undefined }] };
+  assert.match(cutLedgerHtml(legacy, 100), /已保留/);
+  assert.match(cutLedgerHtml(legacy, 100, true), /待处理/);
+});
+
+test('partially deleted candidates show each effective cut rather than the full original candidate', () => {
+  const version = { duration: 8, cut_ledger: [
+    { id: 'partial', start: 102, end: 108, text: '原候选文字', reason: '手动重新删除其中两段', status: 'applied', decision: 'manual',
+      effective_intervals: [{ start: 103, end: 104 }, { start: 106, end: 107 }] },
+  ] };
+  const html = cutLedgerHtml(version, 100);
+  assert.match(html, /00:03.00 — 00:04.00/); assert.match(html, /00:06.00 — 00:07.00/);
+  assert.doesNotMatch(html, /00:02.00 — 00:08.00|data-seconds="102"/);
+  assert.match(html, /data-seconds="103"/); assert.match(html, /data-seconds="106"/);
+  assert.match(html, /手动应用/); assert.match(html, /restore-candidate/);
+  version.cut_ledger[0].effective_intervals = [];
+  assert.doesNotMatch(cutLedgerHtml(version, 100), /restore-candidate|data-seconds=/);
 });

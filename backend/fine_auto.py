@@ -76,7 +76,7 @@ def plan_event(editor, options):
     result={'summary':'\n'.join(dict.fromkeys(summaries))[:2000],'kept_ids':kept,'removed':removed}
     return validate_plan(result,editor.context,options)
 
-def cached(editor,kind,system,payload,validate):
+def cached(editor,kind,system,payload,validate,on_invalid=None):
     stat=Path(editor.task['video']).stat()
     identity=[kind,system,payload,str(Path(editor.task['video']).resolve()),stat.st_size,stat.st_mtime_ns,
               editor.settings['api_base'],editor.settings['api_model']]
@@ -88,12 +88,21 @@ def cached(editor,kind,system,payload,validate):
     for attempt in range(2):
         raw=decode_json(chat_api(editor.settings,messages,editor.store,editor.p['id'],editor.usage))
         editor.persist()
-        try:result=validate(raw)
+        try:
+            result=validate(raw)
+            record=raw
         except ValueError as exc:
-            if attempt:raise
-            messages.extend([{'role':'assistant','content':json.dumps(raw,ensure_ascii=False)},
-                {'role':'user','content':'修正结构或证据错误，不得更改用户要求：'+str(exc)}]);continue
-        temporary=path.with_suffix('.partial');temporary.write_text(json.dumps(raw,ensure_ascii=False),encoding='utf-8');temporary.replace(path)
+            if attempt:
+                if on_invalid is None:raise
+                check_cancel(editor.store,editor.p['id'])
+                # Only a validator failure can enter this conservative local
+                # fallback. Provider/decode/persistence errors stay outside.
+                result=validate(on_invalid(exc,raw))
+                record=result
+            else:
+                messages.extend([{'role':'assistant','content':json.dumps(raw,ensure_ascii=False)},
+                    {'role':'user','content':'修正结构或证据错误，不得更改用户要求：'+str(exc)}]);continue
+        temporary=path.with_suffix('.partial');temporary.write_text(json.dumps(record,ensure_ascii=False),encoding='utf-8');temporary.replace(path)
         return result
 
 def intervals_after_deletions(clip,removed):
@@ -137,7 +146,7 @@ def checked_captions(editor, audio=None, clip=None):
     model=model_dir(editor.store,editor.settings)
     assets=[(name,(model/name).stat().st_size,(model/name).stat().st_mtime_ns)
             for name in ('model.int8.onnx','tokens.txt','silero_vad.onnx')]
-    key=hashlib.sha256(json.dumps(['event-asr-v3',str(source),stat.st_size,stat.st_mtime_ns,clip,
+    key=hashlib.sha256(json.dumps(['event-asr-v4-token-timeline',str(source),stat.st_size,stat.st_mtime_ns,clip,
                                 bool(audio),editor.task.get('audio_track',0),str(model),assets]).encode()).hexdigest()[:20]
     folder=editor.folder/'caption-check';folder.mkdir(exist_ok=True);result=folder/f'{key}.json'
     if result.is_file():return json.loads(result.read_text(encoding='utf-8'))
@@ -161,108 +170,195 @@ def checked_captions(editor, audio=None, clip=None):
                     or a<0 or b<=a or a>=clip['end']-clip['start']
                     or not isinstance(row.get('text'),str) or not row['text'].strip()):
                 raise ValueError('片段转写时间或内容无效，未覆盖已有成果。')
-            row.update(id=i,start=a+clip['start'],end=min(clip['end'],b+clip['start']))
+            from asr import shift_row_timing
+            row=shift_row_timing(row,clip['start'])
+            row.update(id=i,end=min(clip['end'],b+clip['start']))
+            rows[i]=row
         temporary=result.with_suffix('.partial')
         temporary.write_text(json.dumps(rows,ensure_ascii=False),encoding='utf-8');temporary.replace(result);return rows
     finally:wav.unlink(missing_ok=True)
 
 
-def reconcile_audio(original, fresh):
-    """Use fresh speech, but preserve anything the separation may have removed."""
+def reconcile_audio(original, fresh, separated=True):
+    """Resegmentation is a caption warning, not proof the original lost sound.
+
+    Separation-risk protection is local to the discrepant source segment;
+    nearby fresh sentences never inherit a blanket deletion prohibition.
+    """
     normalize=lambda text:re.sub(r'[\W_]+','',text)
     rows=[dict(s) for s in fresh];protected=[]
     for old in original:
         matches=[s for s in fresh if max(old['start'],s['start'])<min(old['end'],s['end'])]
         text=''.join(s['text'] for s in matches)
-        similarity=difflib.SequenceMatcher(None,normalize(old['text']),normalize(text)).ratio()
-        coverage=sum(max(0,min(old['end'],s['end'])-max(old['start'],s['start'])) for s in matches)
-        if similarity<.85 or coverage<.8*(old['end']-old['start']):
-            protected.append({'start':old['start'],'end':old['end'],
-                              'reason':'原声与处理后转写不一致，保守保留'})
-            if not matches:rows.append(dict(old,original_fallback=True))
+        old_text,new_text=normalize(old['text']),normalize(text)
+        matcher=difflib.SequenceMatcher(None,old_text,new_text)
+        # An old coarse sentence can be one substring of a long fresh VAD row.
+        # Coverage of a VAD interval includes pauses and is not word coverage.
+        matched=sum(block.size for block in matcher.get_matching_blocks())
+        agrees=bool(old_text) and (old_text in new_text or matched/max(1,len(old_text))>=.85)
+        if not agrees:
+            if separated:
+                protected.append({'start':old['start'],'end':old['end'],
+                                  'reason':'处理后可能遗漏原声内容，保留对应局部声音'})
+            for row in rows:
+                if max(row['start'],old['start'])<min(row['end'],old['end']):
+                    row['caption_warning']='两次识别文字有分歧，需要听辨；不据此禁止整句剪辑'
+            if not matches:rows.append(dict(old,original_fallback=True,
+                caption_warning='本次未识别到对应原声，保留旧字幕并待听辨'))
         if re.fullmatch(r'(哈{2,}|呵{2,}|呜{2,}|嘿{2,})',normalize(old['text'])):
             protected.append({'start':old['start'],'end':old['end'],'reason':'保留原声中的笑声或情绪反应'})
     rows.sort(key=lambda s:(s['start'],s['end']))
     for i,row in enumerate(rows):
         row['id']=i
-        if any(max(row['start'],p['start'])<min(row['end'],p['end']) for p in protected):
+        if row.get('original_fallback') and separated:
             row['analysis_note']='与原声有分歧，禁止自动删除'
     return rows,protected
 
+def protect_semantic_overlaps(ledger, rows):
+    """Restored speech blocks neighboring whole-row cuts until ownership settles."""
+    from fine_candidates import intersects
+    while True:
+        removed_rows={sid for c in ledger if c['status']=='applied' and c['id'].startswith('row:')
+                      for sid in c['row_ids']}
+        newly_blocked=[]
+        for candidate in ledger:
+            if (candidate['status']=='applied' and candidate['id'].startswith('row:')
+                    and any(row['id'] not in removed_rows and intersects(candidate,row) for row in rows)):
+                newly_blocked.append(candidate)
+        if not newly_blocked:return
+        for candidate in newly_blocked:
+            candidate.update(status='blocked',block_reason='与需要保留的语音时间重叠')
+
+
 def run(editor):
     from fine import mapped_cues
+    from fine_candidates import generate, timing_targets, intersects, merge_removed, execution_summary, reliable_words
+    from fine_story import build_story, decide, final_review
+    from fine_gaps import candidates as gap_candidates
     from audio_identity import ENGINE_ID
     options=options_checked(editor.req.get('options',editor.p.get('edit_options',DEFAULTS)))
     editor.p['edit_options']=options
     original_context=editor.context
-    audio=None;audio_protection=[];fresh=None
+    audio=None;audio_protection=[]
     if options['music']=='reduce':
         from fine_audio import prepare
         audio=prepare(editor)
         editor.persist('重新转写处理后音频')
         fresh=checked_captions(editor,audio)
         editor.persist('对照原声转写与保留反应')
-        editor.context,audio_protection=reconcile_audio(original_context,fresh)
-    elif options['subtitles']=='checked':
-        # Plan and subtitle boundaries must refer to the same speech segmentation.
+        editor.context,audio_protection=reconcile_audio(original_context,fresh,separated=True)
+    elif options['subtitles']=='checked' or options['speech'] or options['cleanup']:
+        # Subtitle visibility does not disable the speech-analysis foundation.
         editor.persist('核对字幕 · 重新识别片段音频')
         fresh=checked_captions(editor)
-        editor.context,audio_protection=reconcile_audio(original_context,fresh)
-    reviewed=plan_event(editor,options)
+        editor.context,audio_protection=reconcile_audio(original_context,fresh,separated=False)
+    targets=timing_targets(editor.context,options)
+    if targets:
+        from fine_alignment import prepare as align
+        editor.persist('定位字词与停顿候选 · 精对齐局部重说')
+        editor.context=align(editor,editor.context,row_ids=targets,audio=audio)
+    ledger=generate(editor.context,options,editor.clip)
+    ledger.extend(gap_candidates(editor,editor.context,options,audio_protection))
+    for candidate in ledger:
+        if (candidate['status']!='blocked' and candidate['start'] is not None
+                and any(intersects(candidate,region) for region in audio_protection)):
+            candidate.update(status='blocked',block_reason='原声局部存在内容或情绪丢失风险')
+    # Publish no version until all grounded decisions and the combined review
+    # pass. Cancellation or provider failure leaves the prior version usable.
+    story=build_story(editor,cached) if any(c['status']!='blocked' for c in ledger) else {
+        'outline':{'summary':'没有可自动执行的候选，保留完整原片。','evidence':[]},'nodes':[]}
+    by_id={candidate['id']:candidate for candidate in ledger}
+    decisions=decide(editor,ledger,options,story,cached)
+    for decision in decisions:
+        candidate=by_id[decision['id']]
+        candidate.update(kind=decision['kind'],reason=decision['reason'],reference_ids=decision['reference_ids'],
+                         decision=decision['action'])
+        if decision.get('validation_blocked'):
+            candidate.update(status='blocked',block_reason=decision['reason'],validation_blocked=True)
+            continue
+        if decision['action']=='remove':candidate['status']='applied'
+    # A model-approved row is still only a semantic proposal. Align those few
+    # rows before executing, so VAD padding never deletes untranscribed tails.
+    semantic_ids={sid for candidate in ledger if candidate['status']=='applied' and candidate['id'].startswith('row:')
+                  for sid in candidate['row_ids']}
+    precise_ids={row['id'] for row in editor.context if row['id'] in semantic_ids and not reliable_words(row)}
+    if precise_ids:
+        from fine_alignment import prepare as align
+        editor.persist('定位字词与停顿候选 · 精对齐已选语义删点')
+        editor.context=align(editor,editor.context,row_ids=precise_ids,audio=audio)
+    source_rows={row['id']:row for row in editor.context}
+    for candidate in ledger:
+        if candidate['status']=='applied' and candidate['id'].startswith('row:'):
+            words=reliable_words(source_rows[candidate['row_ids'][0]])
+            if not words:
+                candidate.update(status='blocked',block_reason='已选语义删点缺少可靠字词边界，保留声音与段尾反应')
+                continue
+            candidate.update(start=max(editor.clip['start'],words[0]['start']),
+                             end=min(editor.clip['end'],words[-1]['end']),word_ids=[word['id'] for word in words])
+            candidate['evidence'].append({'type':'forced_alignment','word_ids':candidate['word_ids']})
+    # A semantic deletion cannot overlap another speech row that remains.
+    removed_rows={sid for c in ledger if c['status']=='applied' and c['id'].startswith('row:') for sid in c['row_ids']}
+    for candidate in ledger:
+        if candidate['status']=='applied' and candidate['id'].startswith('row:'):
+            if any(row['id'] not in removed_rows and intersects(candidate,row) for row in editor.context):
+                candidate.update(status='blocked',block_reason='与需要保留的语音时间重叠')
+            elif candidate['kind']=='repeats' and not any(sid not in removed_rows for sid in candidate.get('reference_ids',[])):
+                candidate.update(status='blocked',block_reason='重复表达的参照也被删除，恢复原文以保留内容')
+            else:
+                anchors=[node for node in story['nodes'] if node['id'] in candidate['row_ids']]
+                if any(not any(node['quote'] in row['text'] for row in editor.context if row['id'] not in removed_rows)
+                       for node in anchors):
+                    candidate.update(status='blocked',block_reason='此原文承载已核对的关键故事节点，保留完整表达')
+    # Restoring an anchor makes its source speech retained again. Recompute
+    # ownership until stable: blocking B can expose another overlap in C.
+    protect_semantic_overlaps(ledger,editor.context)
+    selected=[candidate for candidate in ledger if candidate['status']=='applied']
+    combined=final_review(editor,selected,options,story,cached)
+    for cid in combined['restore_ids']:
+        by_id[cid].update(status='blocked',block_reason='全事件复核恢复：'+combined['reason'])
+    protect_semantic_overlaps(ledger,editor.context)
+    removed_details=merge_removed(ledger,editor.clip)
+    ranges=intervals_after_deletions(editor.clip,[(item['start'],item['end']) for item in removed_details])
+    if not ranges:raise ValueError('候选组合会删除整个事件，未发布方案。')
+    # Report only the union of executable cuts, never an AI promise or quota.
     check_cancel(editor.store,editor.p['id'])
-    by_id={s['id']:s for s in editor.context};deletions=[];removed_details=[];protected=[]
-    for item in reviewed['removed']:
-        s=by_id[item['id']];a=max(editor.clip['start'],s['start']);b=min(editor.clip['end'],s['end'])
-        if any(max(a,p['start'])<min(b,p['end']) for p in audio_protection):
-            protected.append({'id':item['id'],'reason':'原声与处理后音频存在分歧，保守保留'});continue
-        text=re.sub(r'[\W_]+','',s['text'])
-        if (b-a>4 and len(text)/(b-a)<1) or re.fullmatch(r'(哈{2,}|呵{2,}|呜{2,}|嘿{2,})',text):
-            protected.append({'id':item['id'],'reason':'转写定位不足或包含情绪反应，保守保留'});continue
-        if any(max(a,row['start'])<min(b,row['end']) for row in editor.context if row['id'] in reviewed['kept_ids']):
-            protected.append({'id':item['id'],'reason':'与需要保留的语音时间重叠'});continue
-        # Do not extend a semantic deletion into untranscribed laughter or reactions.
-        if b>a:deletions.append((a,b));removed_details.append({**item,'start':a,'end':b,'text':s['text']})
-    if 'silence' in options['speech']:
-        editor.persist('检测音频长静音')
-        padding={'light':.8,'standard':.5,'tight':.3}[options['pace']]
-        silence=detect_silence(editor,audio) if audio else detect_silence(editor)
-        if audio:
-            # Separation can suppress a laugh or whisper. A cleaned-only gap is
-            # not proof of silence: require low energy in the original as well.
-            original_silence=detect_silence(editor)
-            silence=[(max(a,c),min(b,d)) for a,b in silence for c,d in original_silence
-                     if min(b,d)>max(a,c)]
-        for a,b in silence:
-            # A transcript overlap is uncertain, even if the amplitude is low.
-            if b-a>2 and not any(max(a,s['start'])<min(b,s['end']) for s in editor.context+original_context):
-                deletions.append((a+padding,b-padding));removed_details.append({'kind':'silence','reason':'检测到长静音，保留两端停顿','start':a+padding,'end':b-padding,'text':''})
-    ranges=intervals_after_deletions(editor.clip,deletions)
-    # Keep aligned cues even when hidden, so enabling subtitles later reuses the
-    # same fine transcript rather than falling back to the rough pass.
-    caption_rows=editor.context
-    # Publish only after every planning/checking step succeeds; the previous version stays usable.
-    version=editor.version(ranges,reviewed['summary'],subtitles=options['subtitles']!='none')
+    summary=execution_summary(editor.clip,ranges,ledger)
+    version=editor.version(ranges,summary,subtitles=options['subtitles']!='none')
+    source_duration=editor.clip['end']-editor.clip['start']
+    protected=[{'id':c['row_ids'][0] if c['row_ids'] else c['id'],'candidate_id':c['id'],
+                'reason':c['block_reason']} for c in ledger if c['status']=='blocked']
     version.update(confirmed=True,edit_options=options,normalize_audio=options['normalize'],removed=removed_details,
-        auto_review={'reviewed_removals':len(reviewed['removed']),
-                    'protected':protected,'applied_removals':len(removed_details)})
+        cut_ledger=ledger,source_duration=source_duration,removed_duration=max(0.,source_duration-version['duration']),
+        story_review=story,
+        auto_review={'schema':2,'suggested_removals':len(ledger),
+            'reviewed_removals':sum(d['action']=='remove' for d in decisions),
+            'blocked_removals':len(protected),'protected':protected,
+            'applied_removals':sum(c['status']=='applied' for c in ledger),
+            'source_duration':source_duration,'output_duration':version['duration'],
+            'removed_duration':max(0.,source_duration-version['duration']),'final_story_review':combined})
+    # Minimum renderable retained spans can coalesce adjacent cuts. Derive the
+    # receipt from the resulting ranges, so even those small joins are honest.
+    from edit_ledger import refresh as refresh_ledger
+    refresh_ledger(version,editor.clip)
+    version['summary']=summary
+    for removed in version['removed']:
+        contributors=[by_id[cid] for cid in removed['candidate_ids']]
+        removed.update(kind=contributors[0]['kind'] if contributors else 'timeline',
+                       text='；'.join(dict.fromkeys(c['text'] for c in contributors if c['text'])),
+                       kinds=sorted({c['kind'] for c in contributors}))
+    caption_rows=editor.context
     version['transcript_rows']=caption_rows
     from caption_timeline import crosses_cut
     version['caption_boundary_pending']=crosses_cut(caption_rows,ranges)
     if audio:
-        version.update(analysis_audio=audio['identity'],transcript_rows=editor.context,
+        version.update(analysis_audio=audio['identity'],
                        audio_review={'protected_ranges':audio_protection,'method':'processed_audio_with_original_comparison'})
-    if protected:
-        version['summary']+=f'\n有 {len(protected)} 处因转写定位不可靠或涉及反应而保留。'
-    if caption_rows is not None:
-        original=mapped_cues(editor.sentences,ranges);version['cues']=mapped_cues(caption_rows,ranges)
-        uncertain=[]
-        uncertain_cues=mapped_cues([dict(p,text='需要核对') for p in audio_protection],ranges)
-        for cue in version['cues']:
-            before=''.join(c['text'] for c in original if min(c['end'],cue['end'])>max(c['start'],cue['start']))
-            normalize=lambda t:re.sub(r'[\W_]+','',t)
-            if (difflib.SequenceMatcher(None,normalize(before),normalize(cue['text'])).ratio()<.85
-                    or any(max(cue['start'],p['start'])<min(cue['end'],p['end']) for p in uncertain_cues)):
-                uncertain.append(cue['id'])
-        version['caption_review']={'method':'processed_audio_with_original_comparison' if audio else 'local_audio_retranscription','needs_review':uncertain}
+    version['cues']=mapped_cues(caption_rows,ranges)
+    # Recognition disagreements stay visible as caption-review regions, rather
+    # than making every coarse/fine segmentation mismatch veto deletion.
+    warning_regions=[row for row in caption_rows if row.get('caption_warning') or row.get('original_fallback')]
+    warning_regions.extend(audio_protection)
+    from caption_timeline import update_review
+    update_review(version,warning_regions,'processed_audio_with_original_comparison' if audio else 'local_audio_retranscription')
     if options['music']=='reduce':version.update(audio_strength=1,audio_engine=ENGINE_ID)
     editor.persist('按所选要求生成预览');editor.render()

@@ -1,8 +1,10 @@
 /node_modules/
 /.venv/
 /.audio-venv/
+/.alignment-venv/
 /asr-model/
 /audio-model/
+/alignment-model/
 /dist/
 /src-tauri/target/
 /src-tauri/gen/

@@ -17,9 +17,11 @@ def begin(project, command, options=None):
             steps += [('transcribe', '重新转写与对照原声')]
         elif options.get('subtitles') == 'checked':
             steps += [('captions', '核对字幕')]
-        steps += [('plan', '理解片段与制定方案'), ('review', '复核故事与删减依据')]
+        elif options.get('speech'):
+            steps += [('transcribe', '识别片段与定位讲话')]
+        steps += [('align', '定位字词与停顿候选'),('plan', '理解片段与制定方案'), ('review', '复核故事与删减依据')]
         if 'silence' in options.get('speech', []):
-            steps += [('silence', '检测长静音')]
+            steps += [('silence', '核对停顿与反应')]
     if command in ('edit_auto', 'edit_preview', 'edit_confirm', 'edit_export'):
         steps += [('video', '处理视频区间')]
         steps += [('finish', '导出成片' if command == 'edit_export' else '合成并校验成片')]
@@ -44,6 +46,9 @@ def update(project, stage):
     if not execution or execution['state'] != 'running':
         return
     mapping = (
+        ('定位字词与停顿候选','align'),('对齐细剪字词','align'),('核对字词起止','align'),
+        ('局部字词精对齐','align'),
+        ('复核完整事件与实际删点','review'),
         ('理解片段与剪辑要求', 'plan'), ('AI 正在拟定方案', 'plan'),
         ('复核故事完整性', 'review'), ('检测音频长静音', 'silence'),
         ('重新转写处理后音频', 'transcribe'), ('对照原声转写', 'transcribe'),
@@ -51,10 +56,13 @@ def update(project, stage):
         ('检查素材与来源', 'video'), ('生成预览区间', 'video'), ('导出区间', 'video'),
         ('拼接视频区间', 'video'), ('降低背景音乐', 'audio'), ('准备声音试听', 'audio'),
         ('按剪辑区间裁切已处理音频', 'video'),
+        ('按剪辑区间拼接原声', 'video'),
         ('合成画面与声音', 'finish'), ('校验成片', 'finish'), ('写入导出文件', 'finish'),
         ('正在准备粗剪片段', 'source'), ('保存修改', 'save'),
     )
     key = next((key for prefix, key in mapping if stage.startswith(prefix)), None)
+    if key == 'captions' and not any(s['id'] == 'captions' for s in execution['steps']):
+        key = 'transcribe'
     step = next((s for s in execution['steps'] if s['id'] == key), None)
     if step is None:
         return

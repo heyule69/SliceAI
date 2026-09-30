@@ -51,7 +51,7 @@ export function executionIssue(p:Snapshot):'failed'|'cancelled'|'interrupted'|nu
  return null;
 }
 
-export function executionOutcome(p:Snapshot,hasPreview=false){
+export function executionOutcome(p:Snapshot,hasPreview=false,unchanged=false){
  const state=p.error?'failed':p.execution?.state;
  const issue=executionIssue(p);
  if(p.execution?.command==='edit_export'&&issue){
@@ -60,6 +60,51 @@ export function executionOutcome(p:Snapshot,hasPreview=false){
  }
  if(state==='failed')return '<span class="edit-agent-outcome failed">处理未完成 · 已有成果保留</span>';
  if(state==='cancelled'||state==='interrupted'||/取消|中断/.test(p.stage))return '<span class="edit-agent-outcome stopped">处理已停止 · 草稿已保留</span>';
- if(state==='done')return `<span class="edit-agent-outcome done">${check}${p.execution?.command==='edit_export'?'导出完成':'处理完成'}</span>`;
+ if(state==='done')return `<span class="edit-agent-outcome done">${check}${p.execution?.command==='edit_export'?'导出完成':unchanged?'处理结束':'处理完成'}</span>`;
  return '';
+}
+
+export type CutCandidate={id:string;start:number|null;end:number|null;text?:string;quote?:string;reason:string;kind?:string;status:string;decision?:'keep'|'remove'|'manual';block_reason?:string;effective_intervals?:{start:number;end:number}[]};
+export type CutResultVersion={duration:number;source_duration?:number;removed_duration?:number;cut_ledger?:CutCandidate[];candidate_ledger?:{suggested:number;blocked:number;applied:number;candidates:CutCandidate[]};auto_review?:{suggested_removals?:number;blocked_removals?:number;applied_removals?:number;reviewed_removals?:number;protected?:unknown[]};removed?:{start:number;end:number;reason:string;text:string;candidate_ids?:string[]}[]};
+const count=(value:unknown)=>typeof value==='number'&&Number.isFinite(value)?Math.max(0,Math.floor(value)):0;
+
+/** Counts are decisions; saved duration is the effective result, never a planned cut. */
+export function cutResult(version:CutResultVersion,sourceStart:number,sourceEnd:number){
+ const sourceDuration=Math.max(0,sourceEnd-sourceStart);
+ const outputDuration=Number.isFinite(version.duration)?Math.max(0,version.duration):sourceDuration;
+ const removedDuration=Math.max(0,sourceDuration-outputDuration);
+ const ledger=version.cut_ledger??version.candidate_ledger?.candidates;
+ const candidates=ledger??[];
+ const applied=ledger?candidates.filter(c=>c.status==='applied').length:version.removed?.length??count(version.auto_review?.applied_removals);
+ const blocked=ledger?candidates.filter(c=>c.status==='blocked').length:count(version.auto_review?.blocked_removals??version.auto_review?.protected?.length);
+ const suggested=ledger?candidates.length:count(version.auto_review?.suggested_removals??version.auto_review?.reviewed_removals??applied);
+ const unchanged=removedDuration<.03;
+ const reasons=[...new Set(candidates.filter(c=>c.status==='blocked').map(c=>c.block_reason||c.reason).filter(Boolean))];
+ const explanation=unchanged?reasons.length?reasons.slice(0,2).join('；'):blocked?'建议删点暂时无法安全定位，相关内容已保留。':candidates.some(c=>c.status==='restored')?'删减内容已恢复，当前保留完整片段。':'当前要求下没有找到可安全删减的内容。':'';
+ return {sourceDuration,outputDuration,removedDuration,suggested,blocked,applied,unchanged,explanation,candidates};
+}
+
+export function cutSummaryHtml(version:CutResultVersion,sourceStart:number,sourceEnd:number){
+ const result=cutResult(version,sourceStart,sourceEnd);
+ return `<div class="fine-cut-summary ${result.unchanged?'unchanged':''}" role="status"><strong>${result.unchanged?'未产生有效精简':`实际精简 ${result.removedDuration.toFixed(2)} 秒`}</strong><div class="fine-cut-counts"><span>候选 ${result.suggested} 处</span><span>已阻止 ${result.blocked} 处</span><span>实际应用 ${result.applied} 处</span></div>${result.explanation?`<p>${esc(result.explanation)}</p>`:''}</div>`;
+}
+
+const locatedInterval=(interval:{start:number|null;end:number|null})=>typeof interval.start==='number'&&Number.isFinite(interval.start)&&typeof interval.end==='number'&&Number.isFinite(interval.end)&&interval.end>interval.start;
+
+export function restorableCandidate(version:CutResultVersion,id:string){
+ const candidate=(version.cut_ledger??version.candidate_ledger?.candidates??[]).find(c=>c.id===id);
+ return candidate?.status==='applied'&&locatedInterval(candidate)&&(!candidate.effective_intervals||candidate.effective_intervals.some(locatedInterval))?candidate:null;
+}
+
+export function cutLedgerHtml(version:CutResultVersion,sourceStart:number,busy=false){
+ const candidates=version.cut_ledger??version.candidate_ledger?.candidates;
+ if(!candidates?.length)return '';
+ const time=(n:number)=>`${Math.floor(n/60).toString().padStart(2,'0')}:${(n%60).toFixed(2).padStart(5,'0')}`;
+ return `<details class="fine-deletions fine-cut-ledger"><summary>查看删点与保留原因 · ${candidates.length} 处</summary><p class="fine-cut-note">时间相对粗剪片段；点击时间可查看原声。</p>${candidates.map(c=>{
+  const intervals=c.status==='applied'&&c.effective_intervals?c.effective_intervals.filter(locatedInterval):locatedInterval(c)?[c]:[];
+  const retained=c.status==='suggested'&&(c.decision==='keep'||(!c.decision&&!busy&&!!c.reason));
+  const label=c.status==='applied'?(c.decision==='manual'?'手动应用':'已应用'):c.status==='blocked'||retained?'已保留':c.status==='restored'?'已恢复':'待处理';
+  const times=intervals.map(interval=>`<button class="text-button" data-fine-action="seek-source" data-seconds="${interval.start}">${time(Math.max(0,interval.start!-sourceStart))} — ${time(Math.max(0,interval.end!-sourceStart))}</button>`).join('');
+  return `<article class="fine-cut-item ${c.status==='applied'?'applied':c.status==='blocked'?'blocked':'retained'}"><div class="fine-cut-item-head">${times||'<span class="fine-cut-unlocated">暂时无法定位</span>'}<span class="fine-cut-label">${label}</span></div><p>${esc(c.reason)}</p>${c.text||c.quote?`<blockquote>${esc(c.text||c.quote)}</blockquote>`:''}${c.status==='blocked'&&c.block_reason?`<small>保留原因：${esc(c.block_reason)}</small>`:''}${restorableCandidate(version,c.id)?`<button class="secondary-button" data-fine-action="restore-candidate" data-candidate="${esc(c.id)}" ${busy?'disabled':''}>恢复这段</button>`:''}</article>`;
+ }).join('')}</details>`;
 }

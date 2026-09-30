@@ -13,7 +13,7 @@ class ProgressTest(unittest.TestCase):
     def test_optional_steps_and_only_measured_percentage(self):
         p = self.project()
         begin(p, 'edit_auto', {'speech': [], 'subtitles': 'none', 'music': 'original'})
-        self.assertEqual([s['id'] for s in p['execution']['steps']], ['prepare', 'plan', 'review', 'video', 'finish'])
+        self.assertEqual([s['id'] for s in p['execution']['steps']], ['prepare', 'align', 'plan', 'review', 'video', 'finish'])
         update(p, '生成预览区间 · 1/1')
         step = next(s for s in p['execution']['steps'] if s['id'] == 'video')
         self.assertIsNone(step['percent'])
@@ -24,7 +24,7 @@ class ProgressTest(unittest.TestCase):
         p = self.project()
         begin(p, 'edit_auto', {'speech': ['silence'], 'subtitles': 'checked', 'music': 'reduce'})
         self.assertEqual([s['id'] for s in p['execution']['steps']],
-                         ['prepare','audio','transcribe','plan','review','silence','video','finish'])
+                         ['prepare','audio','transcribe','align','plan','review','silence','video','finish'])
         update(p, '降低背景音乐 · 100%')
         steps = {s['id']: s for s in p['execution']['steps']}
         self.assertEqual(steps['audio']['percent'], 100)
@@ -34,7 +34,7 @@ class ProgressTest(unittest.TestCase):
         self.assertEqual(steps['audio']['state'], 'done')
         self.assertEqual(steps['transcribe']['state'], 'running')
         self.assertEqual(steps['plan']['state'], 'pending')
-        for stage in ('对照原声转写与保留反应','理解片段与剪辑要求', '复核故事完整性与删减依据',
+        for stage in ('对照原声转写与保留反应','定位字词与停顿候选','理解片段与剪辑要求', '复核故事完整性与删减依据',
                       '检测音频长静音','生成预览区间 · 1/1','合成画面与声音'):
             update(p, stage)
         self.assertEqual(steps['finish']['state'], 'running')

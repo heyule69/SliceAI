@@ -2,10 +2,56 @@
 from __future__ import annotations
 import argparse
 import json
+import math
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+ASR_FORMAT = 2
+
+
+def result_row(result, start, end, row_id, runtime_version='1.12.40'):
+    """Retain CTC emission anchors; they are deliberately not word spans."""
+    text = re.sub(r'<\|[^>]+\|>', '', result.text).strip()
+    if not text:
+        return None
+    tokens = []
+    previous = -1
+    for token, timestamp in zip(getattr(result, 'tokens', ()) or (),
+                                getattr(result, 'timestamps', ()) or ()):
+        if not isinstance(token, str) or re.fullmatch(r'<\|[^>]+\|>', token):
+            continue
+        try:
+            anchor = start + float(timestamp)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(anchor) or anchor < start or anchor > end or anchor < previous:
+            continue
+        tokens.append({'text': token, 'anchor': round(anchor, 6), 'timing_method': 'ctc_emission'})
+        previous = anchor
+    return {'id': row_id, 'start': start, 'end': end, 'text': text,
+            'asr_format': ASR_FORMAT, 'timing_method': 'vad_segment', 'tokens': tokens,
+            'timing_metadata': {'token_boundaries': 'ctc_emission_only',
+                                'event_labels': 'model_hints_not_verified'},
+            'vad': {'start': start, 'end': end, 'method': 'silero_vad', 'sample_rate': 16000},
+            'asr': {'model': 'SenseVoiceSmall-int8', 'runtime': 'sherpa-onnx',
+                    'version': runtime_version, 'use_itn': True,
+                    **{field: str(getattr(result, field, '') or '')
+                       for field in ('lang', 'emotion', 'event')}}}
+
+
+def shift_row_timing(row, offset):
+    """Move all ASR coordinates together when a file is an extracted event."""
+    row['start'] += offset
+    row['end'] += offset
+    for token in row.get('tokens', []):
+        token['anchor'] += offset
+    vad = row.get('vad')
+    if isinstance(vad, dict):
+        vad['start'] += offset
+        vad['end'] += offset
+    return row
 
 def run_asr(args):
     import numpy as np
@@ -42,9 +88,10 @@ def run_asr(args):
                     stream=recognizer.create_stream()
                     stream.accept_waveform(16000,samples)
                     recognizer.decode_stream(stream)
-                    text=re.sub(r'<\|[^>]+\|>','',stream.result.text).strip()
-                    if text:
-                        row={'id':count,'start':segment.start/16000,'end':(segment.start+len(samples))/16000,'text':text}
+                    row=result_row(stream.result,segment.start/16000,
+                                   (segment.start+len(samples))/16000,count,
+                                   getattr(sherpa_onnx,'__version__','1.12.40'))
+                    if row:
                         out.write(json.dumps(row,ensure_ascii=False)+'\n');out.flush();count+=1
                     del stream,samples
                 vad.pop()

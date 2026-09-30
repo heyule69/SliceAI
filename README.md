@@ -11,7 +11,7 @@ Windows 录播切片客户端：先发现完整事件，再通过固定问答选
 1. 左下角「设置」填写自己的 AI API 地址、模型和 Key。内容判断通过 API；转写在本地进行。SenseVoice INT8 转写模型及 Silero VAD 随软件内置，无需首次下载。
 2. 导入录播，可选附加 UTF-8 的 SRT/VTT 转写及 XML/JSON 弹幕。多音轨素材可选择要分析的音轨，默认第一音轨；转写、声音处理、预览和导出使用同一选择。选择内容偏好和来源过滤，开始查找事件。
 3. 结果默认先列出，按需预览、选择并导出。粗剪保持连续原区间、原构图和原声音，不新增字幕。使用 H.264/AAC 转码精确截取。
-4. 进入「细剪」，通过五步选择确定剪辑要求。点击开始后自动制定方案、复核并生成预览。修改内容区间需要重新确认。
+4. 进入「细剪」，通过五步选择确定剪辑要求。点击开始后生成有原文证据的候选，判断删减并复核完整故事，再生成预览。界面显示候选、被阻止和实际应用数量，以及原片到成片的真实时长；可查看删点的源相对时间、原文和理由。恢复已应用删点会创建新版本，重新映射字幕，需要确认后生成新预览。修改内容区间也需要重新确认。
 5. 字幕可改字、拆分合并、调整时间；默认烧录，可关闭并选择另存 SRT。修改字幕后先保存草稿，再预览、切换版本或导出。改变保留区间后需检查切点附近字幕并重新确认；字幕核对标记提示原声和转写存在分歧。预览和正式导出使用同一方案。
 6. 降低背景音乐可直接应用，20 秒原声/处理后试听为可选步骤。启用时先处理完整事件音频，再转写对照、判断删减并复用处理音频合成；默认强度为 100%，可调低或恢复原声。
 
@@ -35,7 +35,9 @@ Windows 录播切片客户端：先发现完整事件，再通过固定问答选
 - 已通过字幕映射、重排确认、版本恢复、API 失败、取消、来源复核等自动回归；声音已获得用户对聊天和笑声样本的认可。
 - 长录播实际结果的重复事件合并、完整桌面交互及资源验收仍在进行，不能把本次声音模块验收视为整个 0.2 计划完成。
 
-2026-09-30 当前源码软件实测：一个 429.398 秒事件走完标准细剪与导出后仍删除零秒，58 条字幕中 46 条待核对。媒体导出正常，但精简和字幕质量未达标。已核查开源文字剪辑与对齐实现，并用现有模型验证字/token 锚点可以返回；改造方向和未验证边界见 [细剪核心改造提案](docs/fine-editing-redesign.md)，提案尚未实现。
+2026-09-30 改造前软件实测：一个 429.398 秒事件走完标准细剪与导出后仍删除零秒，58 条字幕中 46 条待核对。媒体导出正常，精简和字幕质量未达标。此记录保留为历史基线。
+
+同一事件在当前源码的真实界面重跑中，V2 应用 7 个删点、删除 2.09 秒；人工发现一个误判的重说删点，并通过界面恢复为 V3。V3 记录 82 个候选、16 个被阻止、6 个实际应用，计划时长 427.628 秒，实际删除 1.77 秒。真实界面预览、播放及 MP4 + SRT 导出已完成；成片时长 427.632683 秒，完整解码零错误，6 个删点均覆盖完整对齐字，源区间和字幕边界检查通过。63 项字幕中仍有 14 项待核对；逐句主观听辨、字幕质量及金标验收尚未通过，尚未认定整体细剪效果合格。实现、开源依据和未验证边界见 [细剪改造记录](docs/fine-editing-redesign.md)。
 
 ## 开发和构建
 
@@ -61,6 +63,17 @@ python -X utf8 scripts/prepare-audio-model.py --download
 
 ASR 资产写入 `asr-model/SenseVoice`，声音资产写入 `audio-model/BandItPlus`；构建入口在运行 PyInstaller 前按仓库固定清单校验。详见 [可复现构建](docs/reproducible-build.md)。应用运行时只加载随完整包提供的离线模型。
 
+字词对齐是独立的可选离线环境；句内删点需要它提供可靠的字词起止。本次环境使用 Python 3.12、CPU 版 PyTorch 的 bfloat16 推理、固定的 Qwen3-ForcedAligner 权重和 safetensors 0.8.0 的 `pread` 读取方式。它只对候选相关窗口对齐，不引入 Qwen ASR，不替换 SenseVoice 转写。开发环境单独安装以下依赖；权重约 1.84 GB，仅下面显式准备命令会下载，应用运行时校验本地资产并禁用下载。若模型或子进程缺失、校验失败或对齐不完整，原始转写和粗剪仍可用，需要可靠字词边界的候选会被阻止并说明原因。全窗口对齐不完整时可以使用独立验证完整的局部窗口；无法完整覆盖目标字词或与保留语音重叠的切口会被阻止。
+
+```powershell
+py -3.12 -m venv .alignment-venv
+.alignment-venv/Scripts/python.exe -m pip install -r backend/requirements-alignment-lock.txt
+python -X utf8 scripts/prepare-alignment-model.py --download --dry-run
+python -X utf8 scripts/prepare-alignment-model.py --download
+# 离线导入可改用 --source-dir <已准备的权重目录>
+.alignment-venv/Scripts/python.exe -X utf8 scripts/prepare-alignment-model.py --verify-only
+```
+
 ```powershell
 npm run build
 npm run test:frontend
@@ -71,17 +84,22 @@ npm run test:frontend
 .audio-venv/Scripts/python.exe -X utf8 scripts/build-audio.py
 .venv/Scripts/python.exe -X utf8 scripts/prepare-asr-model.py
 .venv/Scripts/python.exe -X utf8 scripts/build-worker.py
+.alignment-venv/Scripts/python.exe -X utf8 scripts/build-alignment.py
+.alignment-venv/Scripts/python.exe -X utf8 scripts/build-alignment.py --verify-only
 npm run bundle
-.venv/Scripts/python.exe -X utf8 scripts/package-release.py
+.venv/Scripts/python.exe -X utf8 scripts/package-release.py --verify-only --require-alignment
+.venv/Scripts/python.exe -X utf8 scripts/package-release.py --require-alignment
 ```
 
-构建需要 Rust MSVC 工具链、Visual Studio C++ Build Tools，FFmpeg / FFprobe 在 PATH 中；音频和 ASR 使用不同 Python 环境。`npm run dev` 只预览界面，桌面本地操作使用 `npm run desktop`。
+构建需要 Rust MSVC 工具链、Visual Studio C++ Build Tools，FFmpeg / FFprobe 在 PATH 中；音频、ASR 和字词对齐分别使用独立 Python 环境。先构建各子进程，再执行 `npm run bundle`。对齐构建的 `--dry-run` 仅显示计划，`--verify-only` 检查已有冻结资源并明确报告未构建；发布预检校验本地模型、对齐运行文件及许可证。发布脚本不会下载模型，完整字词细剪包使用 `--require-alignment` 阻止漏包；已有发布目录会保留为 `build/release-previous-*` 备份。`npm run dev` 只预览界面，桌面本地操作使用 `npm run desktop`。
 
-BandIt 原项目采用 Apache-2.0，MSST 推理实现采用 MIT；本地适配说明和许可证保存在 `backend/bandit/`，完整包包含在 `worker/audio/licenses/`。其他第三方组件见 `worker/THIRD-PARTY-NOTICES.txt` 与 `worker/audio/THIRD-PARTY-NOTICES.txt`。安装包未作代码签名。
+BandIt 原项目采用 Apache-2.0，MSST 推理实现采用 MIT；本地适配说明和许可证保存在 `backend/bandit/`，完整包包含在 `worker/audio/licenses/`。独立对齐包的构建目标为 `worker/alignment/`，携带模型清单、逐文件校验清单、Qwen 的 Apache-2.0 许可证全文和安装 wheel 的第三方许可；模型卡声明 Apache-2.0，全文从 Qwen 软件 wheel 复制并标注来源。其他第三方组件见各 worker 的 `THIRD-PARTY-NOTICES.txt`。安装包未作代码签名。本轮未构建新的冻结 runtime 或 NSIS 安装包，也未替换 `release/` 客户端；冻结后离线运行和真实剪辑质量仍需验收。
 
 ## 回归与质量性能基线
 
 GitHub Actions 分开运行前端构建/交互回归、Windows Python/DPAPI/FFmpeg 回归，以及独立音频环境的合成分块/重采样/缓存测试；CI 不下载大型模型、不调用真实 AI。
+
+本轮本地自动回归通过 206 项：后端 168 项、前端 17 项、构建脚本 21 项。上述真实素材的预览、导出和机械检查另行记录，自动回归通过不代表主观剪辑质量或字幕已经合格。
 
 `python -X utf8 scripts/benchmark.py synthetic` 用固定 24 秒测试图案/纯音素材跑细剪预览和导出，保存时长、字幕元数据以及 CPU、进程树工作集、I/O 和输出目录占用。真实长录播可通过显式命令测量，再用独立标注和结果 JSON 计算漏剪、误选、重复、受保护内容误删及字幕时间误差。缺少 AI 结果或人工标注时记录“未测”，合成素材通过不代表实际内容识别质量。指标定义、命令与验收范围见 [验收基线](docs/acceptance.md)。
 

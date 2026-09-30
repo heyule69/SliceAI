@@ -8,10 +8,17 @@ def intersects(row, region):
 
 
 def crosses_cut(rows, ranges):
-    return any(intersects(row, interval) and
-               (row.get('boundary_uncertain') or row['start'] < interval['start'] - EPSILON
-                or row['end'] > interval['end'] + EPSILON)
-               for row in rows for interval in ranges)
+    from word_timeline import words_for,cuts_word
+    for row in rows:
+        for interval in ranges:
+            if not intersects(row,interval):
+                continue
+            if words_for(row) and not row.get('boundary_uncertain'):
+                if cuts_word(row,interval):return True
+            elif (row.get('boundary_uncertain') or row['start']<interval['start']-EPSILON
+                  or row['end']>interval['end']+EPSILON):
+                return True
+    return False
 
 
 def source_rows(cues, ranges):
@@ -74,7 +81,7 @@ def mark_partial_groups(rows, ranges):
 def review_regions(version):
     regions = list(version.get('caption_review_regions', []))
     regions.extend(row for row in version.get('subtitle_rows',version.get('transcript_rows',[]))
-                   if row.get('original_fallback') or row.get('analysis_note'))
+                   if row.get('original_fallback') or row.get('analysis_note') or row.get('caption_warning'))
     uncertain = set(version.get('caption_review', {}).get('needs_review', []))
     if uncertain:
         regions.extend(source_rows([cue for cue in version['cues'] if cue['id'] in uncertain], version['ranges']))
@@ -104,6 +111,16 @@ def refresh_boundaries(editor, version):
     from fine import mapped_cues
     from fine_auto import checked_captions
     base = version.get('subtitle_rows', version.get('transcript_rows', editor.sentences))
+    restored=[item for item in version.get('cut_ledger',[]) if item.get('status')=='restored'
+              and type(item.get('start')) in (int,float) and type(item.get('end')) in (int,float)]
+    # Retained-only ASR leaves hidden source fragments inside deleted words.
+    # Restoring a word must recover its original sentence, rather than ask VAD
+    # to recognize a 200–300 ms fragment without speech context.
+    originals=[row for row in version.get('transcript_rows',[]) if any(intersects(row,cut) for cut in restored)
+               and not any(edited.get('user_edited') and intersects(row,edited) for edited in base)]
+    if originals:
+        base=overlay_rows(base, originals, merged_regions(originals))
+        version['subtitle_rows']=base
     rows = mark_partial_groups(base, version['ranges'])
     warnings = review_regions(version)
     targets = []
@@ -130,7 +147,7 @@ def refresh_boundaries(editor, version):
     for target in merged:
         editor.persist('重新核对剪切点字幕')
         fresh = checked_captions(editor, audio, clip=target)
-        if any(intersects(row, target) and (row.get('original_fallback') or row.get('analysis_note')) for row in rows):
+        if any(intersects(row, target) and (row.get('original_fallback') or row.get('analysis_note') or row.get('caption_warning')) for row in rows):
             warnings.append(target)
         replacement.extend(fresh)
     if merged:

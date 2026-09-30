@@ -122,8 +122,10 @@ def audio_filter(info, rate=48000, start=0, seek=None, duration=None):
 
 
 def aligned_audio_args(ffmpeg, source, output, *, track=0, start=None, duration=None,
-                       rate=48000, ffprobe=None, run=None, info=None, pcm='pcm_f32le'):
+                       rate=48000, ffprobe=None, run=None, info=None, pcm='pcm_f32le', channels=1):
     track = audio_track(track)
+    if type(channels) is not int or not 1 <= channels <= 8:
+        raise ValueError('音频输出声道数无效。')
     if info is None:
         ffprobe = ffprobe or str(Path(ffmpeg).with_name('ffprobe.exe' if Path(ffmpeg).suffix == '.exe' else 'ffprobe'))
         info = probe_audio(source, ffprobe, run)
@@ -135,7 +137,7 @@ def aligned_audio_args(ffmpeg, source, output, *, track=0, start=None, duration=
     seek = input_seek(info, start) if start is not None else None
     if seek is not None:
         args += ['-ss', f'{seek:.9f}']
-    args += ['-i', str(source), '-map', f'0:a:{track}', '-vn', '-ac', '1',
+    args += ['-i', str(source), '-map', f'0:a:{track}', '-vn', '-ac', str(channels),
              '-af', audio_filter(info, rate, start or 0, seek, duration), '-ar', str(rate)]
     if str(output) == 'pipe:1':
         args += ['-f', 's16le' if pcm == 'pcm_s16le' else 'f32le', str(output)]

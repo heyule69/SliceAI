@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import test_fine
+from test_fine_auto import grounded_response
 from engine import Cancelled, probe, tool_path
 from fine import Editor, save
 from fine_audio import prepare, cut, audio_duration
@@ -45,13 +46,13 @@ class AudioFirstTest(unittest.TestCase):
             self.assertTrue(Path(audio['path']).is_file());order.append('asr');return fresh
         def api(settings,messages,*args):
             order.append('ai');payload=json.loads(messages[1]['content'])
-            self.assertEqual(payload['transcript'][0]['text'],fresh[0]['text'])
-            return json.dumps(self.keep(payload['transcript']))
+            if 'transcript' in payload:self.assertEqual(payload['transcript'][0]['text'],fresh[0]['text'])
+            return grounded_response(messages)
         with patch('fine_audio.process_audio',side_effect=separate) as model,\
                 patch('fine_auto.checked_captions',side_effect=asr) as transcribe,\
                 patch('fine_auto.chat_api',side_effect=api):
             self.run_cmd('edit_auto',options=self.options())
-            self.assertEqual(order,['audio','asr','ai','ai'])
+            self.assertEqual(order,['audio','asr','ai','ai','ai'])
             v=self.p['versions'][-1];self.assertFalse(v['subtitles'])
             self.assertEqual(v['transcript_rows'][0]['text'],fresh[0]['text'])
             self.assertEqual(v['cues'][0]['text'],fresh[0]['text'])
@@ -90,7 +91,7 @@ class AudioFirstTest(unittest.TestCase):
             self.assertEqual(model.call_count,1)
         with patch('fine_audio.process_audio',side_effect=AssertionError('Must reuse cached audio')),\
                 patch('fine_auto.checked_captions',return_value=copy.deepcopy(self.rows)),\
-                patch('fine_auto.chat_api',return_value=json.dumps(self.keep(self.rows))):
+                patch('fine_auto.chat_api',side_effect=lambda settings,messages,*a:grounded_response(messages)):
             self.run_cmd('edit_auto',options=self.options())
         steps={s['id']:s for s in self.p['execution']['steps']}
         self.assertEqual(steps['audio']['state'],'done')
@@ -111,13 +112,11 @@ class AudioFirstTest(unittest.TestCase):
         rows,protected=reconcile_audio(original,fresh)
         self.assertEqual(len(rows),3)
         self.assertTrue(rows[1]['original_fallback'])
-        self.assertTrue(all('analysis_note' in r for r in rows[1:]))
+        self.assertTrue(all(r.get('analysis_note') or r.get('caption_warning') for r in rows[1:]))
         self.assertTrue(any(p['start']==2 for p in protected))
         (self.store.task_dir(self.task['id'])/'transcript.json').write_text(json.dumps(original,ensure_ascii=False),encoding='utf-8')
         def api(settings,messages,*args):
-            data=json.loads(messages[1]['content'])['transcript']
-            return json.dumps({'summary':'删除重复','kept_ids':[0],
-                 'removed':[{'id':r['id'],'kind':'repeats','reason':'重复内容','quote':r['text']} for r in data[1:]]})
+            return grounded_response(messages,['row:1','row:2'])
         with patch('fine_audio.prepare',return_value={'identity':{'test':True}}),\
                 patch('fine_auto.checked_captions',return_value=fresh),\
                 patch('fine_auto.chat_api',side_effect=api),patch.object(Editor,'render'):
@@ -128,14 +127,38 @@ class AudioFirstTest(unittest.TestCase):
         self.assertTrue(v['caption_review']['needs_review'])
 
     def test_cleaned_only_silence_does_not_delete_original_reactions(self):
+        fresh=[{'id':0,'start':0.,'end':2.,'text':'故事的开端'},
+               {'id':1,'start':8.,'end':10.,'text':'故事的完整结局'}]
+        (self.store.task_dir(self.task['id'])/'transcript.json').write_text(json.dumps(fresh,ensure_ascii=False),encoding='utf-8')
         def silence(editor,audio=None):return [(2,8)] if audio else []
         with patch('fine_audio.prepare',return_value={'identity':{'test':True}}),\
-                patch('fine_auto.checked_captions',return_value=copy.deepcopy(self.rows)),\
+                patch('fine_auto.checked_captions',return_value=fresh),\
                 patch('fine_auto.detect_silence',side_effect=silence) as detect,\
-                patch('fine_auto.chat_api',return_value=json.dumps(self.keep(self.rows))),patch.object(Editor,'render'):
+                patch('fine_auto.chat_api',side_effect=lambda settings,messages,*a:grounded_response(messages)),patch.object(Editor,'render'):
             self.run_cmd('edit_auto',options=self.options(speech=['silence']))
-        self.assertEqual(detect.call_count,2)
+        detect.assert_not_called()
         self.assertEqual(self.p['versions'][-1]['duration'],12)
+        gap=next(c for c in self.p['versions'][-1]['cut_ledger'] if c['kind']=='silence')
+        self.assertEqual(gap['status'],'blocked')
+        self.assertEqual(gap['evidence'][-1]['type'],'original_audio_measurement')
+        self.assertFalse(gap['evidence'][-1]['safe'])
+
+    def test_unrecognized_original_voice_in_gap_blocks_even_quiet_energy_candidate(self):
+        fresh=[{'id':0,'start':0.,'end':2.,'text':'故事的开端'},
+               {'id':1,'start':8.,'end':10.,'text':'故事的完整结局'}]
+        (self.store.task_dir(self.task['id'])/'transcript.json').write_text(json.dumps(fresh,ensure_ascii=False),encoding='utf-8')
+        evidence={'type':'original_audio_measurement','safe':True,'p95_dbfs':-38.,'reason':'原始混音安静'}
+        activity={'type':'original_gap_vad','available':True,'detected':True,'reason':'检测到原声中的低声反应'}
+        with patch('fine_audio.prepare',return_value={'identity':{'test':True}}),\
+                patch('fine_auto.checked_captions',return_value=fresh),\
+                patch('fine_gaps.characterize',return_value=evidence),\
+                patch('fine_gaps.voice_activity',return_value=activity) as vad,\
+                patch('fine_auto.chat_api',side_effect=lambda settings,messages,*a:grounded_response(messages)),patch.object(Editor,'render'):
+            self.run_cmd('edit_auto',options=self.options(speech=['silence']))
+        vad.assert_called_once()
+        version=self.p['versions'][-1];self.assertEqual(version['removed'],[])
+        candidate=next(c for c in version['cut_ledger'] if c['kind']=='silence')
+        self.assertEqual(candidate['status'],'blocked');self.assertIn('低声反应',candidate['block_reason'])
 
     def test_audio_cache_invalidates_on_source_or_strength_and_cut_uses_event_offsets(self):
         self.p.update(source_start=3,source_end=10)

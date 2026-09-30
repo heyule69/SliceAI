@@ -85,7 +85,11 @@ def cut(editor, record, ranges, folder):
         a, b = interval['start'] - offset, interval['end'] - offset
         if a < -.001 or b > record['duration'] + .1 or b <= a:
             raise ValueError('音频剪辑区间超出已处理片段。')
-        filters.append(f'[0:a]atrim=start={max(0,a):.6f}:end={b:.6f},asetpts=PTS-STARTPTS[a{i}]')
+        chain=f'[0:a]atrim=start={max(0,a):.6f}:end={b:.6f},asetpts=PTS-STARTPTS'
+        fade=min(.008,(b-a)/4)
+        if i:chain+=f',afade=t=in:st=0:d={fade:.6f}'
+        if i+1<len(ranges):chain+=f',afade=t=out:st={b-a-fade:.6f}:d={fade:.6f}'
+        filters.append(chain+f'[a{i}]')
     filters.append(''.join(f'[a{i}]' for i in range(len(ranges))) +
                    f'concat=n={len(ranges)}:v=0:a=1[out]')
     script = folder / 'audio-ranges.txt'
@@ -95,7 +99,7 @@ def cut(editor, record, ranges, folder):
     try:
         command([tool_path(editor.settings, 'ffmpeg'), '-v', 'error', '-nostdin', '-y',
                  '-i', record['path'], '-filter_complex_script', str(script), '-map', '[out]',
-                 '-ar', '48000', '-ac', '1', '-c:a', 'pcm_f32le', '-rf64', 'auto', str(temp)],
+                 '-ar', '48000', '-ac', str(record.get('channels',1)), '-c:a', 'pcm_f32le', '-rf64', 'auto', str(temp)],
                 editor.store, editor.p['id'])
         expected = sum(r['end'] - r['start'] for r in ranges)
         if abs(audio_duration(editor, temp) - expected) > .1:

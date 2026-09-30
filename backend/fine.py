@@ -72,10 +72,15 @@ def valid_ranges(raw,clip):
 
 
 def mapped_cues(sentences,ranges):
+    from word_timeline import clipped_word_cues
     result=[];offset=0
     for r in ranges:
         for row in sentences:
             if row['end']<=r['start'] or row['start']>=r['end']:continue
+            aligned=clipped_word_cues(row,r,offset)
+            if aligned is not None:
+                result.extend(aligned)
+                continue
             cue={'start':max(0,row['start']-r['start'])+offset,
                  'end':min(r['end'],row['end'])-r['start']+offset,'text':row['text']}
             group=row.get('edit_group')
@@ -84,7 +89,8 @@ def mapped_cues(sentences,ranges):
                 result[-1]['end']=cue['end']
             else:result.append(dict(cue,_group=group))
         offset+=r['end']-r['start']
-    return [dict(start=c['start'],end=c['end'],text=c['text'],id=i+1) for i,c in enumerate(result)]
+    return [dict(start=c['start'],end=c['end'],text=c['text'],id=i+1,
+                 **({'words':c['words']} if 'words' in c else {})) for i,c in enumerate(result)]
 
 
 @contextlib.contextmanager
@@ -92,7 +98,7 @@ def render_scratch(folder,count):
     """Discard generated intermediates on success, failure or cancellation."""
     try:yield
     finally:
-        names=['render.partial.mp4','joined.mp4','edited-audio.wav','edited-audio.partial.wav']
+        names=['render.partial.mp4','joined.mp4','edited-audio.wav','edited-audio.partial.wav','source-audio.wav']
         names += [f'part-{i}{suffix}.mp4' for i in range(count) for suffix in ('','.partial')]
         for name in names:(folder/name).unlink(missing_ok=True)
 
@@ -113,6 +119,12 @@ def subtitle_lines(cues):
     out=[]
     for c in cues:
         text=c['text'].replace('\r','').replace('\n',' ')
+        if c.get('words'):
+            # mapped_cues already groups against real word timing. Never evenly
+            # divide a corrected sentence to manufacture finer timestamps.
+            out.append({'start':c['start'],'end':c['end'],
+                        'text':text[:18]+('\n'+text[18:] if len(text)>18 else '')})
+            continue
         pieces=[text[i:i+36] for i in range(0,len(text),36)] or ['']
         for i,t in enumerate(pieces):
             start=c['start']+(c['end']-c['start'])*i/len(pieces)
@@ -219,19 +231,28 @@ class Editor:
     def update_version(self):
         old=self.current();v=copy.deepcopy(old)
         v.update(id=str(uuid.uuid4()),number=len(self.p['versions'])+1,created=now(),preview='',render_key='')
-        if 'ranges' in self.req:
+        if 'ranges' in self.req or 'restore_candidate_id' in self.req:
+            from caption_timeline import review_regions
+            warnings=review_regions(old)
+        if 'restore_candidate_id' in self.req and 'ranges' in self.req:
+            raise ValueError('恢复删点与手动区间调整请分别保存。')
+        if 'restore_candidate_id' in self.req:
+            from edit_ledger import restore
+            restore(v,self.req['restore_candidate_id'],self.clip)
+        if 'ranges' in self.req or 'restore_candidate_id' in self.req:
             from caption_timeline import review_regions,update_review,mark_partial_groups
-            warnings=review_regions(v)
-            v['ranges']=valid_ranges(self.req['ranges'],self.clip)
+            v['ranges']=valid_ranges(self.req.get('ranges',v['ranges']),self.clip)
             v['duration']=sum(r['end']-r['start'] for r in v['ranges'])
             from caption_timeline import crosses_cut
             rows=mark_partial_groups(v.get('subtitle_rows',v.get('transcript_rows',self.sentences)),v['ranges'])
             v['cues']=mapped_cues(rows,v['ranges']);v['confirmed']=False
             v['caption_boundary_pending']=crosses_cut(rows,v['ranges'])
             update_review(v,warnings,v.get('caption_review',{}).get('method','range_adjusted'))
-            if 'removed' in v:v['removed']=[d for d in v['removed'] if not any(max(d['start'],r['start'])<min(d['end'],r['end']) for r in v['ranges'])]
+            if 'removed' in v or 'cut_ledger' in v:
+                from edit_ledger import refresh
+                refresh(v,self.clip,manual='ranges' in self.req)
             v['reordered']=any(a['start']>b['start'] for a,b in zip(v['ranges'],v['ranges'][1:]))
-            v['summary']='手动调整保留区间；请重新确认。'
+            if 'cut_ledger' not in v:v['summary']='手动调整保留区间；请重新确认。'
         if 'cues' in self.req:
             from caption_timeline import source_rows,overlay_rows,review_regions,subtract,update_review
             warnings=[piece for region in review_regions(v) for piece in subtract(region,v['ranges'])]
@@ -267,7 +288,7 @@ class Editor:
             if v.get('caption_boundary_pending') or crosses_cut(rows,v['ranges']):
                 refresh_boundaries(self,v)
         key=hashlib.sha256(json.dumps({'version':{k:v[k] for k in ('ranges','cues','subtitles','audio_strength')},
-              'renderer':5,'audio_track':self.task.get('audio_track',0),'normalize_audio':v.get('normalize_audio',False),'audio_engine':v.get('audio_engine') if v['audio_strength'] else None,
+              'renderer':7,'audio_track':self.task.get('audio_track',0),'normalize_audio':v.get('normalize_audio',False),'audio_engine':v.get('audio_engine') if v['audio_strength'] else None,
               'video':str(source),'size':source.stat().st_size,'mtime':source.stat().st_mtime_ns,'export':export},sort_keys=True).encode()).hexdigest()
         folder=self.folder/'renders'/key;folder.mkdir(parents=True,exist_ok=True)
         final=folder/'render.mp4'
@@ -298,7 +319,11 @@ class Editor:
                                '-c:v','libx264','-preset','veryfast','-crf','18' if export else '23','-threads','2','-filter_threads','1',
                                 '-pix_fmt','yuv420p','-c:a','aac','-ar','48000','-ac','2','-b:a','192k',str(temp)]
                         if info['audio']:
-                            args[-1:-1]=['-af',audio_filter(timeline,48000,start=r['start'],seek=seek,duration=r['end']-r['start'])]
+                            filters=audio_filter(timeline,48000,start=r['start'],seek=seek,duration=r['end']-r['start'])
+                            fade=min(.008,(r['end']-r['start'])/4)
+                            if i:filters+=f',afade=t=in:st=0:d={fade}'
+                            if i+1<len(v['ranges']):filters+=f",afade=t=out:st={r['end']-r['start']-fade}:d={fade}"
+                            args[-1:-1]=['-af',filters]
                         command(args,self.store,self.p['id']);temp.replace(part)
                     parts.append(part)
                 concat=folder/'parts.txt';concat.write_text(''.join(f"file '{p.name}'\nduration {r['end']-r['start']:.6f}\n" for p,r in zip(parts,v['ranges'])),encoding='utf-8')
@@ -306,8 +331,22 @@ class Editor:
                 joined=folder/'joined.mp4'
                 command([ffmpeg,'-v','error','-nostdin','-y','-f','concat','-safe','1','-i',str(concat),'-t',str(v['duration']),'-c','copy',str(joined)],self.store,self.p['id'])
                 audio=None
-                if prepared:
-                    self.persist('按剪辑区间裁切已处理音频')
+                if prepared or info['audio']:
+                    # Concatenating individually encoded AAC packets can carry
+                    # encoder delay into every join. Assemble exact PCM source
+                    # intervals independently of the video frame clock.
+                    if not prepared:
+                        from media_audio import aligned_audio_args
+                        from audio_cache import ensure_space
+                        ensure_space(self,folder,2*(self.clip['end']-self.clip['start']),stem_ready=True)
+                        raw_audio=folder/'source-audio.wav'
+                        command(aligned_audio_args(ffmpeg,source,raw_audio,
+                            track=self.task.get('audio_track',0),start=self.clip['start'],
+                            duration=self.clip['end']-self.clip['start'],rate=48000,pcm='pcm_f32le',channels=2,
+                            ffprobe=tool_path(self.settings,'ffprobe')),self.store,self.p['id'])
+                        prepared={'path':str(raw_audio),'duration':self.clip['end']-self.clip['start'],
+                                  'identity':{'start':self.clip['start']},'channels':2}
+                    self.persist('按剪辑区间裁切已处理音频' if v['audio_strength'] else '按剪辑区间拼接原声')
                     audio=cut_audio(self,prepared,v['ranges'],folder)
                 self.persist('合成画面与声音')
                 args=[ffmpeg,'-v','error','-nostdin','-y','-i',str(joined)]
@@ -320,7 +359,9 @@ class Editor:
                 else:args+=['-c:v','copy']
                 temp=folder/'render.partial.mp4'
                 if v.get('normalize_audio'):args+=['-af','loudnorm=I=-16:TP=-1.5:LRA=11']
-                args+=['-t',str(v['duration']),'-c:a','aac' if audio or v.get('normalize_audio') else 'copy','-movflags','+faststart',str(temp)]
+                args+=['-t',str(v['duration']),'-c:a','aac' if audio or v.get('normalize_audio') else 'copy']
+                if audio or v.get('normalize_audio'):args+=['-ar','48000','-b:a','192k']
+                args+=['-movflags','+faststart',str(temp)]
                 try:
                     command(args,self.store,self.p['id'],cwd=folder)
                     self.persist('校验成片')
