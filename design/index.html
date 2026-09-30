@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light">
+  <title>SliceAI — 全自动录播切片</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='11' fill='%23292d36'/%3E%3Cpath d='M11 11h18l-7 8H11zm0 18h18v-8h-7z' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5a1 1 0 0 1 1-1h6l2 3h8a1 1 0 0 1 1 1v11H3z"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><path d="M4 9a8 8 0 1 1 0 7M4 3v6h6M12 7v5l3 2"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="16" cy="17" r="3"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M20 12H4m6-6-6 6 6 6"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V3m-4 4 4-4 4 4M4 14v7h16v-7"/></symbol>
+    <symbol id="i-film" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4m-4 6h4M17 9h4m-4 6h4"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m9 5 11 7-11 7z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M5 3h9l5 5v13H5zM14 3v6h5M8 13h8m-8 4h6"/></symbol>
+    <symbol id="i-text" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h6m-6 4h8"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 4h16v13H9l-5 4zM8 9h8m-8 4h5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 9a3 3 0 1 1 5 2c-2 1-2 2-2 3m0 3v.1"/></symbol>
+    <symbol id="i-wave" viewBox="0 0 24 24"><path d="M3 10v4m4-8v12m5-15v18m5-15v12m4-8v4"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6zM8 12l3 3 5-6"/></symbol>
+  </defs></svg>
+
+  <div class="app-layout">
+    <aside class="sidebar">
+      <a class="brand" href="#home" aria-label="SliceAI 首页"><span class="brand-mark"><i></i><i></i></span><span>Slice<span class="brand-ai">AI</span></span></a>
+      <div class="workspace-name"><span class="workspace-avatar">S</span><div>我的工作空间<small>本地 · 独立项目</small></div></div>
+      <div class="nav-label">工作空间</div>
+      <nav aria-label="主导航">
+        <button class="nav-item active" data-page="home"><svg><use href="#i-plus"/></svg><span>新建切片</span><kbd>N</kbd></button>
+        <button class="nav-item" data-page="tasks"><svg><use href="#i-history"/></svg><span>全部任务</span><span class="nav-count" id="taskCount">2</span></button>
+        <button class="nav-item" data-page="exports"><svg><use href="#i-download"/></svg><span>导出记录</span></button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="local-note"><span class="local-icon"><svg><use href="#i-wave"/></svg></span><div>本地语音转写<small>按需运行，轻装上阵</small></div></div>
+        <button class="nav-item" data-action="settings"><svg><use href="#i-settings"/></svg><span>设置</span></button>
+        <div class="sidebar-footer"><span>SliceAI <small>DESIGN 02</small></span><button class="icon-button" data-action="help" aria-label="使用帮助"><svg><use href="#i-help"/></svg></button></div>
+      </div>
+    </aside>
+
+    <div class="main-shell">
+      <header class="topbar"><div class="breadcrumbs"><svg><use href="#i-home"/></svg><span>工作空间</span><svg class="crumb-arrow"><use href="#i-chevron"/></svg><b id="pageBreadcrumb">新建切片</b></div><div class="header-right"><span class="design-badge">交互设计稿</span><button class="text-button" data-action="help">使用指南 <svg><use href="#i-help"/></svg></button></div></header>
+      <main id="pageContent">
+        <section id="homePage" class="page home-page">
+          <header class="page-heading"><div><div class="eyebrow">LESS WATCHING. MORE MOMENTS.</div><h1>好几个小时的录播，<span>只留下精彩。</span></h1><p>导入一段录播，自动发现、剪出并导出值得分享的片段。</p></div><span class="page-number">01 <i>/</i> 开始创作</span></header>
+
+          <section class="create-panel" aria-label="新建自动切片任务">
+            <div class="import-section">
+              <div class="section-heading"><h2><span class="step-number">01</span>导入录播</h2><button class="text-button blue" id="demoButton">试试示例录播 <svg><use href="#i-arrow"/></svg></button></div>
+              <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="选择或拖入录播视频">
+                <div id="dropzoneContent">
+                  <div class="file-art" aria-hidden="true"><span class="art-back"></span><span class="art-sheet"><svg><use href="#i-play"/></svg><i></i><i></i></span><span class="art-plus"><svg><use href="#i-plus"/></svg></span></div>
+                  <h3>把长录播拖到这里</h3><p>或 <span>选择本地视频</span></p><div class="file-types">MP4 <i>·</i> MKV <i>·</i> FLV <i>·</i> MOV</div>
+                </div>
+              </div>
+              <input id="videoFile" type="file" accept=".mp4,.mkv,.flv,.mov,.webm" hidden>
+              <div class="supplement-heading"><span>补充素材 <small>可选</small></span><span>有现成字幕？可以跳过转写</span></div>
+              <div class="supplement-grid"><button class="attachment" id="subtitleButton"><span class="attachment-icon"><svg><use href="#i-text"/></svg></span><span><b id="subtitleName">添加字幕</b><small>SRT / VTT</small></span><svg class="attach-plus"><use href="#i-plus"/></svg></button><button class="attachment" id="chatButton"><span class="attachment-icon"><svg><use href="#i-chat"/></svg></span><span><b id="chatName">添加弹幕</b><small>XML / JSON</small></span><svg class="attach-plus"><use href="#i-plus"/></svg></button></div>
+              <input id="subtitleFile" type="file" accept=".srt,.vtt" hidden><input id="chatFile" type="file" accept=".xml,.json" hidden>
+              <div class="source-note"><svg><use href="#i-shield"/></svg><span>原视频保留在本地，内容分析使用转写与可选弹幕。</span></div>
+            </div>
+
+            <div class="preference-section">
+              <div class="section-heading"><h2><span class="step-number">02</span>告诉我你的偏好</h2><span class="subtle">其余自动完成</span></div>
+              <fieldset><legend>每段时长</legend><div class="segmented" id="durationChoices"><button class="segment" data-value="short">30–60 秒</button><button class="segment" data-value="medium">1–3 分钟</button><button class="segment active" data-value="smart" aria-pressed="true">智能决定</button></div><p class="field-hint" id="durationHint">优先保留完整语意，让故事有头有尾。</p></fieldset>
+              <fieldset><legend>想看什么 <span>可多选</span></legend><div class="topic-choices" id="topicChoices"><button class="topic active" data-value="自动判断">自动判断 <svg><use href="#i-check"/></svg></button><button class="topic" data-value="搞笑整活">搞笑整活</button><button class="topic" data-value="聊天故事">聊天故事</button><button class="topic" data-value="弹幕互动">弹幕互动</button></div></fieldset>
+              <fieldset class="output-field"><legend>成片形式</legend><div class="output-choices" id="outputChoices"><button class="output-option active" data-value="separate"><span class="radio-dot"></span><span>独立片段<small>每段保存为一个视频</small></span></button><button class="output-option" data-value="compilation"><span class="radio-dot"></span><span>精彩合集<small>合并为一个视频</small></span></button></div></fieldset>
+              <div class="auto-export-row"><label class="switch-label"><input id="autoExport" type="checkbox" checked><span class="switch"></span><span>完成后自动导出</span></label><button class="icon-button tiny" data-action="exportInfo" aria-label="自动导出说明"><svg><use href="#i-help"/></svg></button></div>
+              <button class="primary-button start-button" id="startButton" disabled><span>开始自动切片</span><svg><use href="#i-arrow"/></svg></button>
+              <p class="start-hint" id="startHint">先添加一段录播，或试试左侧示例</p>
+            </div>
+          </section>
+
+          <div class="workflow-strip" aria-label="自动处理流程"><span><b>01</b>本地语音转写</span><i></i><span><b>02</b>AI 定位精彩内容</span><i></i><span><b>03</b>自动剪辑与导出</span><small>一次设置，自动完成</small></div>
+          <section class="recent-section" aria-label="最近任务"><div class="recent-heading"><h2>最近任务 <span id="recentCount">2</span></h2><button class="text-button" data-page="tasks">全部任务 <svg><use href="#i-arrow"/></svg></button></div><div class="task-table"><div class="task-table-head"><span>录播</span><span>精彩片段</span><span>状态</span><span></span></div><div id="recentTasks"></div></div></section>
+          <footer class="page-footnote"><span>ASR 本地运行 <i>·</i> AI 分析使用独立 API 配置</span><span>当前为设计预览，不会运行模型或上传素材</span></footer>
+        </section>
+
+        <section id="tasksPage" class="page" hidden><header class="page-heading compact"><div><div class="eyebrow">YOUR RECORDINGS</div><h1>每场录播，都有值得留下的瞬间。</h1><p>在这里查看自动切片任务和生成的精彩片段。</p></div><button class="primary-button" data-page="home"><svg><use href="#i-plus"/></svg>新建切片</button></header><div class="library-toolbar"><div class="tabs"><button class="active" data-task-filter="all">全部任务</button><button data-task-filter="complete">已完成</button><button data-task-filter="cancelled">已取消</button></div><label class="search-field"><svg><use href="#i-search"/></svg><input id="taskSearch" placeholder="搜索录播名称" aria-label="搜索录播名称"></label></div><div class="task-table"><div class="task-table-head"><span>录播</span><span>精彩片段</span><span>状态</span><span></span></div><div id="allTasks"></div></div></section>
+
+        <section id="processingPage" class="page" hidden><div id="processingContent"></div></section>
+        <section id="resultsPage" class="page" hidden><div id="resultsContent"></div></section>
+        <section id="exportsPage" class="page" hidden><header class="page-heading compact"><div><div class="eyebrow">READY TO SHARE</div><h1>导出记录</h1><p>已下载的示例剪辑清单会显示在这里。</p></div></header><div id="exportRecords"></div></section>
+      </main>
+    </div>
+  </div>
+  <dialog id="modal"><form method="dialog"><button class="icon-button close-modal" aria-label="关闭弹窗"><svg><use href="#i-close"/></svg></button></form><div id="modalContent"></div></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>

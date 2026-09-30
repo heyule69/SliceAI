@@ -1,0 +1,8 @@
+BandIt by Karn N. Watcharasupat and contributors (Apache-2.0).
+https://github.com/kwatcharasupat/bandit
+Inference adapted from Music-Source-Separation-Training
+Copyright (c) 2024 Roman Solovyev (ZFTurbo), MIT.
+https://github.com/ZFTurbo/Music-Source-Separation-Training
+SliceAI modifications: local package imports; training base replaced with torch.nn.Module;
+equivalent MIDI formulas to omit librosa; disk-streamed inference wrapper.
+Model: BandIt Plus DnR SDR 11.47, speech stem only.

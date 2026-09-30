@@ -1,0 +1,11 @@
+{
+  "name": "sliceai", "version": "0.2.0", "private": true, "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "tauri": "tauri", "desktop": "tauri dev", "bundle": "tauri build",
+    "test": ".venv/Scripts/python.exe -m unittest discover -s tests -v"
+  },
+  "dependencies": {"@tauri-apps/api": "^2", "@tauri-apps/plugin-dialog": "^2"},
+  "devDependencies": {"@tauri-apps/cli": "^2", "typescript": "~5.9.3", "vite": "^7.1.0"}
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SliceAI", "version": "0.2.0", "identifier": "com.sliceai.desktop",
+  "build": {"beforeDevCommand":"npm run dev","devUrl":"http://localhost:1420","beforeBuildCommand":"npm run build","frontendDist":"../dist"},
+  "app": {
+    "windows": [{"label":"main","title":"SliceAI · 自动录播切片","width":1090,"height":720,"minWidth":960,"minHeight":640,"center":true,"visible":false,"backgroundColor":"#f6f7f9"}],
+    "security": {
+      "csp":"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data:; media-src 'self' asset: http://asset.localhost blob:; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'self'",
+      "assetProtocol":{"enable":true,"scope":[]}
+    }
+  },
+  "bundle":{"active":true,"targets":["nsis"],"icon":["icons/icon.ico"],"resources":{"resources/worker/":"worker/"},"shortDescription":"导入长录播，自动发现和导出精彩片段","windows":{"nsis":{"languages":["SimpChinese"],"displayLanguageSelector":false,"installMode":"currentUser"}}}
+}

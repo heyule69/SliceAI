@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>SliceAI — 切片工作台 · 交互设计稿</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23d8b48d'/%3E%3Cpath d='M9 10h14l-6 6H9zm0 12h14v-6h-6z' fill='%231c1c1e'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <svg class="sprite" xmlns="http://www.w3.org/2000/svg"><defs>
+    <symbol id="i-cut" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="m8.2 8.2 12 12M8.2 15.8 20 4M14 10l-2 2"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5a1 1 0 0 1 1-1h6l2 3h8a1 1 0 0 1 1 1v11H3z"/></symbol>
+    <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 15V3m-4 4 4-4 4 4M4 13v7h16v-7"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="16" cy="17" r="3"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m9 5 11 7-11 7z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M5 5v14m14-14-10 7 10 7z"/></symbol>
+    <symbol id="i-next" viewBox="0 0 24 24"><path d="M19 5v14M5 5l10 7-10 7z"/></symbol>
+    <symbol id="i-volume" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4zM17 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-wave" viewBox="0 0 24 24"><path d="M3 10v4m4-8v12m5-15v18m5-15v12m4-8v4"/></symbol>
+    <symbol id="i-message" viewBox="0 0 24 24"><path d="M4 4h16v13H9l-5 4zM8 9h8m-8 4h5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-retry" viewBox="0 0 24 24"><path d="M4 9a8 8 0 1 1 1 8M4 3v6h6"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v1"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M5 3h9l5 5v13H5zM14 3v6h5M8 13h8m-8 4h6"/></symbol>
+    <symbol id="i-mark" viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4z"/></symbol>
+  </defs></svg>
+
+  <div class="app">
+    <aside class="rail" aria-label="主导航">
+      <a class="brand" href="#" aria-label="SliceAI 工作台"><span></span><span></span></a>
+      <div class="rail-main">
+        <button class="rail-button active" aria-label="切片工作台" data-action="workspace"><svg><use href="#i-cut"/></svg><span>工作台</span></button>
+        <button class="rail-button" aria-label="素材库" data-action="library"><svg><use href="#i-folder"/></svg><span>素材</span></button>
+        <button class="rail-button" aria-label="导出片段" data-action="export"><svg><use href="#i-export"/></svg><span>导出</span><b id="railCount">3</b></button>
+      </div>
+      <button class="rail-button" aria-label="设置" data-action="settings"><svg><use href="#i-settings"/></svg><span>设置</span></button>
+      <div class="avatar" title="本地工作区">S</div>
+    </aside>
+
+    <div class="shell">
+      <header class="topbar">
+        <div class="wordmark">Slice<span>AI</span><small>切片工作台</small></div>
+        <div class="prototype-label"><span></span> 交互设计稿 <i>/</i> 示例数据</div>
+        <button class="quiet" data-action="help" aria-label="使用提示"><svg><use href="#i-info"/></svg><span>使用提示</span></button>
+      </header>
+
+      <header class="projectbar">
+        <div class="project-title"><div class="breadcrumb">我的项目 <svg><use href="#i-chevron"/></svg> 雨夜杂谈</div><h1>今晚不打游戏，聊点有的没的<span class="project-tag">杂谈</span></h1></div>
+        <div class="project-actions"><button class="button" data-action="import"><svg><use href="#i-plus"/></svg>导入素材</button><button class="button primary" data-action="export"><svg><use href="#i-export"/></svg>导出选中 <span class="button-count" id="exportCount">3</span></button></div>
+      </header>
+
+      <main class="workspace">
+        <section class="candidates panel" aria-label="精彩候选">
+          <div class="section-head"><h2>精彩候选 <span id="resultCount">6</span></h2><button class="icon-button" data-action="analysis" aria-label="分析偏好"><svg><use href="#i-settings"/></svg></button></div>
+          <div class="analysis-source"><span class="status-dot"></span>转写 + 弹幕联合分析 <button data-action="analysis" aria-label="重新分析"><svg><use href="#i-retry"/></svg></button></div>
+          <div class="filter-row" role="group" aria-label="筛选片段"><button class="filter active" data-filter="all">全部</button><button class="filter" data-filter="fun">搞笑整活</button><button class="filter" data-filter="story">故事分享</button><button class="filter" data-filter="interaction">互动</button></div>
+          <div class="list-toolbar"><span id="listLabel">按推荐顺序</span><button class="text-button" id="sortButton">切换为时间排序 <span>↕</span></button></div>
+          <div class="clip-list" id="clipList"></div>
+          <div class="selection-footer"><label><input type="checkbox" id="selectAll">全选当前列表</label><span>已选 <b id="selectedCount">3</b> 段</span></div>
+        </section>
+
+        <section class="editor panel" aria-label="片段预览">
+          <div class="section-head editor-heading"><div><span class="eyebrow">片段预览</span><span id="clipOrdinal" class="subtle">01 / 06</span></div><div class="preview-mode"><span class="status-dot"></span>原始画幅 <span class="mono">16:9</span></div></div>
+          <div class="video-wrap" id="videoWrap"><img src="assets/stream-room.png" alt="原创虚拟主播在暖色书房中聊天的示例画面" id="previewImage"><div class="video-top"><span class="video-source"><span></span> 雨夜杂谈 <i>·</i> 示例画面</span><span class="video-quality">1080P</span></div><div class="subtitle" id="subtitle">我以为我关麦了，结果只是把耳机摘了。</div><span class="video-watermark">SliceAI / DESIGN STUDY</span></div>
+          <div class="transport"><span class="timecode"><b id="currentTime">00:23:16</b><span>/</span><span id="endTime">00:24:38</span></span><div class="playback-buttons"><button class="icon-button" id="previousClip" aria-label="上一个片段"><svg><use href="#i-back"/></svg></button><button class="play-button" id="playButton" aria-label="演示播放"><svg><use href="#i-play"/></svg></button><button class="icon-button" id="nextClip" aria-label="下一个片段"><svg><use href="#i-next"/></svg></button></div><div class="transport-right"><button class="speed" id="speedButton" aria-label="切换演示速度">1×</button><button class="icon-button" data-action="fullscreen" aria-label="放大预览"><svg><use href="#i-expand"/></svg></button></div></div>
+          <div class="clip-detail"><div class="clip-title-line"><div><div class="detail-eyebrow"><span id="detailCategory">搞笑整活</span><span>·</span><span id="detailDuration">1 分 42 秒</span></div><h2 id="detailTitle">以为关了麦，其实全听见了</h2></div><button class="save-button selected" id="bookmarkButton" aria-label="取消选择当前片段"><svg><use href="#i-check"/></svg><span>已选中</span></button></div><p id="detailReason">从“偷偷吐槽”到发现没关麦，反转完整，弹幕反应集中。保留前面的铺垫，笑点才成立。</p><div class="evidence-chips"><span><svg><use href="#i-message"/></svg><span id="reactionEvidence">弹幕密度明显上升</span></span><span><svg><use href="#i-wave"/></svg>语义完整</span><button class="text-button" id="seeEvidence">查看依据 <svg><use href="#i-chevron"/></svg></button></div></div>
+          <div class="trim-box"><div class="trim-head"><span>剪辑区间</span><button class="text-button" id="resetTrim">恢复推荐区间</button></div><div class="trim-inputs"><label><span>入点</span><input id="startInput" value="00:22:56" aria-label="片段入点，时分秒" spellcheck="false"></label><span class="trim-connector">—</span><label><span>出点</span><input id="endInput" value="00:24:38" aria-label="片段出点，时分秒" spellcheck="false"></label><span class="trim-duration" id="trimDuration">01:42</span></div></div>
+        </section>
+
+        <section class="transcript panel" aria-label="内容依据">
+          <div class="inspector-tabs" role="tablist" aria-label="内容依据类型"><button class="inspector-tab active" role="tab" aria-selected="true" data-tab="transcript">转写</button><button class="inspector-tab" role="tab" aria-selected="false" data-tab="chat">弹幕</button><button class="inspector-tab" role="tab" aria-selected="false" data-tab="reason">推荐依据</button></div>
+          <div class="transcript-search"><svg><use href="#i-search"/></svg><input id="transcriptSearch" placeholder="搜索转写内容" aria-label="搜索转写内容"><kbd>/</kbd></div>
+          <div class="transcript-meta"><span id="inspectorLabel"><span class="status-dot"></span>本地 ASR · 示例转写</span><span id="inspectorExtra">跟随片段</span></div>
+          <div id="inspectorContent" class="inspector-content"></div>
+          <div class="transcript-footer"><svg><use href="#i-info"/></svg><span>点击时间戳，定位对应画面</span></div>
+        </section>
+      </main>
+
+      <section class="timeline" aria-label="整场时间轴">
+        <div class="timeline-toolbar"><div class="timeline-heading"><svg><use href="#i-wave"/></svg><h2>整场时间轴</h2><span class="mono">02:18:46</span></div><div class="timeline-legend"><span><i class="legend-clip"></i>候选片段</span><span><i class="legend-chat"></i>弹幕热度</span></div><div class="timeline-tools"><button class="text-button" id="fitTimeline">适应全长</button><button class="icon-button" id="zoomOut" aria-label="缩小时间轴">−</button><span id="zoomLabel">100%</span><button class="icon-button" id="zoomIn" aria-label="放大时间轴">+</button></div></div>
+        <div class="timeline-body"><div class="track-labels"><span>时间</span><span><svg><use href="#i-cut"/></svg>精彩片段</span><span><svg><use href="#i-message"/></svg>弹幕热度</span></div><div class="timeline-scroll" id="timelineScroll"><div class="tracks" id="tracks"><div class="ruler" id="ruler"></div><div class="clip-track" id="clipTrack"></div><div class="heat-track"><svg id="heatmap" viewBox="0 0 1200 42" preserveAspectRatio="none" aria-label="示例弹幕热度曲线"></svg></div><div class="playhead" id="playhead"><span id="playheadLabel">23:16</span><i></i></div></div></div></div>
+      </section>
+      <footer class="statusbar"><div><span class="status-dot"></span>本地工作区<span class="divider">|</span><span>ASR 本地转写</span><span class="dot-separator">·</span><span>精彩分析使用 API</span></div><div><span>设计稿 · 不连接服务</span><span class="divider">|</span><kbd>Space</kbd><span>演示播放</span></div></footer>
+    </div>
+  </div>
+
+  <dialog id="modal"><form method="dialog"><button class="modal-close icon-button" aria-label="关闭窗口"><svg><use href="#i-close"/></svg></button></form><div id="modalContent"></div></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>

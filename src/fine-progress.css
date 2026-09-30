@@ -1,0 +1,42 @@
+/* Agent-style status: transparent, light, and driven by real worker checkpoints. */
+.edit-agent-run{color:#414b5b;background:transparent}
+.edit-agent-intro{font-size:13px;line-height:1.85;margin:0 0 23px}
+.edit-agent-steps{display:flex;flex-direction:column}
+.edit-agent-step{display:grid;grid-template-columns:17px minmax(0,1fr);column-gap:10px;position:relative;padding-bottom:19px}
+.edit-agent-step:before{content:'';position:absolute;left:7px;top:23px;bottom:6px;width:1px;background:#edf0f4}
+.edit-agent-step:last-child{padding-bottom:0}
+.edit-agent-step:last-child:before{display:none}
+.edit-agent-marker{height:20px;display:grid;place-items:center;color:#a5adb8;font-size:12px}
+.edit-agent-marker>svg,.edit-agent-outcome svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.edit-agent-step.done .edit-agent-marker{color:#7d9285}
+.edit-agent-step.pending .edit-agent-marker:after,.edit-agent-step.skipped .edit-agent-marker:after{content:'';width:4px;height:4px;border-radius:50%;background:#d7dce3}
+.edit-agent-step-title{font-size:12px;line-height:20px;color:#87919e;overflow-wrap:anywhere}
+.edit-agent-step-title small{font-size:10px;font-weight:400;margin-left:6px;color:#98a2af}
+.edit-agent-step.running .edit-agent-step-title{font-weight:550;background:linear-gradient(100deg,#434e60 20%,#9ca7b6 48%,#434e60 75%);background-size:240% auto;background-clip:text;-webkit-background-clip:text;color:transparent;animation:edit-agent-shimmer 2.8s linear infinite}
+.edit-agent-step.pending .edit-agent-step-title{color:#a8b1bd}
+.edit-agent-step.running .edit-agent-marker{color:#5b6d89}
+.edit-agent-note{font-size:11px;line-height:1.7;color:#8591a3;margin:5px 0 0;overflow-wrap:anywhere}
+.edit-agent-spinner{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0;background:transparent}
+.edit-agent-spinner svg{width:16px;height:16px;stroke:none;fill:currentColor;animation:edit-agent-spin 1s steps(12) infinite}
+.edit-agent-meter{height:2px;background:#edf0f5;border-radius:2px;overflow:hidden;margin-top:10px;max-width:178px}
+.edit-agent-meter i{display:block;height:100%;background:#91a2bd;transition:width .3s linear}
+.edit-agent-percent{display:block;font-size:10px;margin-top:7px;color:#8b98a9;font-variant-numeric:tabular-nums}
+.edit-agent-meter[hidden],.edit-agent-percent[hidden],.edit-agent-note[hidden]{display:none}
+.edit-agent-history{margin-bottom:15px}
+.edit-agent-history summary{cursor:pointer;color:#8e99a9;font-size:10px;padding-bottom:10px}
+.edit-agent-history .edit-agent-step{padding-bottom:10px}
+.edit-agent-requirements{margin-top:26px;border-top:1px solid #edf0f4;padding-top:13px}
+.edit-agent-requirements summary{cursor:pointer;font-size:10px;color:#8b97a8}
+.edit-agent-requirements summary span{float:right;color:#a2adba}
+.edit-agent-requirements p{font-size:11px;line-height:1.7;color:#7f8b9e;margin:10px 0 0;overflow-wrap:anywhere}
+.edit-agent-requirements p span{display:block;font-size:10px;color:#a0aaba;margin-bottom:2px}
+.edit-agent-announcement{position:absolute;clip:rect(0,0,0,0);width:1px;height:1px;overflow:hidden;white-space:nowrap}
+.edit-agent-outcome{display:flex;align-items:center;gap:6px;font-size:11px;margin:0 0 18px;color:#75877d}
+.edit-agent-outcome.failed{color:#ab6755}.edit-agent-outcome.stopped{color:#8894a4}
+.fine-question-body:has(.edit-agent-run){padding:22px 20px 17px}
+.fine-questions:has(.edit-agent-run) .fine-question-footer{background:transparent;min-height:47px}
+body:has(.page#finePage[hidden]) .edit-agent-spinner svg,body:has(.page#finePage[hidden]) .edit-agent-step-title{animation-play-state:paused}
+@keyframes edit-agent-spin{to{transform:rotate(360deg)}}
+@keyframes edit-agent-shimmer{to{background-position:-240% 0}}
+@media(max-height:670px){.fine-question-body:has(.edit-agent-run){padding:16px 17px}.edit-agent-intro{font-size:12px;margin-bottom:18px}.edit-agent-step{padding-bottom:15px}.edit-agent-requirements{margin-top:20px}}
+@media(prefers-reduced-motion:reduce){.edit-agent-spinner svg,.edit-agent-step.running .edit-agent-step-title{animation:none}.edit-agent-step.running .edit-agent-step-title{background:none;color:#434e60}.edit-agent-meter i{transition:none}}
