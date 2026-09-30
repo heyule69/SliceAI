@@ -4,9 +4,11 @@ Windows 录播切片客户端：先发现完整事件，再通过固定问答选
 
 ## 使用
 
-下述新增行为以当前源码构建为准。本轮更新没有重新打包或替换 `release/` 中的客户端；已有客户端需在后续构建发布后才包含这些修复。
+正式交付使用安装版：运行 `release/SliceAI_0.2.0_x64-setup.exe`，按安装向导安装后使用。2026-09-30 已更新此安装包，包含字词细剪改造、导出目录修复及三个离线工作进程。
 
-运行 `release/SliceAI-0.2.0/SliceAI.exe`，保留旁边的 `worker` 文件夹。安装包为 `release/SliceAI_0.2.0_x64-setup.exe`。支持 Windows 10 / 11 x64，需要 WebView2；不需要用户安装 Python 或 FFmpeg。
+测试阶段使用免安装程序：当前构建可直接运行 `src-tauri/target/release/sliceai.exe`，保留旁边的整个 `worker` 文件夹。使用 `npm run build:portable` 更新测试程序，跳过安装包压缩；确认测试结果后再通过 `npm run bundle` 生成正式安装包。完整打包脚本另外收集的 `release/SliceAI-0.2.0/` 用于免安装测试，只有重新收集后才代表当前源码。
+
+支持 Windows 10 / 11 x64，需要 WebView2；两种方式都不需要用户安装 Python 或 FFmpeg。
 
 1. 左下角「设置」填写自己的 AI API 地址、模型和 Key。内容判断通过 API；转写在本地进行。SenseVoice INT8 转写模型及 Silero VAD 随软件内置，无需首次下载。
 2. 导入录播，可选附加 UTF-8 的 SRT/VTT 转写及 XML/JSON 弹幕。多音轨素材可选择要分析的音轨，默认第一音轨；转写、声音处理、预览和导出使用同一选择。选择内容偏好和来源过滤，开始查找事件。
@@ -91,15 +93,15 @@ npm run bundle
 .venv/Scripts/python.exe -X utf8 scripts/package-release.py --require-alignment
 ```
 
-构建需要 Rust MSVC 工具链、Visual Studio C++ Build Tools，FFmpeg / FFprobe 在 PATH 中；音频、ASR 和字词对齐分别使用独立 Python 环境。先构建各子进程，再执行 `npm run bundle`。对齐构建的 `--dry-run` 仅显示计划，`--verify-only` 检查已有冻结资源并明确报告未构建；发布预检校验本地模型、对齐运行文件及许可证。发布脚本不会下载模型，完整字词细剪包使用 `--require-alignment` 阻止漏包；已有发布目录会保留为 `build/release-previous-*` 备份。`npm run dev` 只预览界面，桌面本地操作使用 `npm run desktop`。
+构建需要 Rust MSVC 工具链、Visual Studio C++ Build Tools，FFmpeg / FFprobe 在 PATH 中；音频、ASR 和字词对齐分别使用独立 Python 环境。先构建各子进程，测试时执行 `npm run build:portable`，正式打包执行 `npm run bundle`。测试程序依赖相邻的完整 `worker` 目录；后台源码或模型变化后，需要先更新对应的冻结工作进程。对齐构建的 `--dry-run` 仅显示计划，`--verify-only` 检查已有冻结资源并明确报告未构建；发布预检校验本地模型、对齐运行文件及许可证。发布脚本不会下载模型，完整字词细剪包使用 `--require-alignment` 阻止漏包；已有发布目录会保留为 `build/release-previous-*` 备份。`npm run dev` 只预览界面，桌面本地操作使用 `npm run desktop`。
 
-BandIt 原项目采用 Apache-2.0，MSST 推理实现采用 MIT；本地适配说明和许可证保存在 `backend/bandit/`，完整包包含在 `worker/audio/licenses/`。独立对齐包的构建目标为 `worker/alignment/`，携带模型清单、逐文件校验清单、Qwen 的 Apache-2.0 许可证全文和安装 wheel 的第三方许可；模型卡声明 Apache-2.0，全文从 Qwen 软件 wheel 复制并标注来源。其他第三方组件见各 worker 的 `THIRD-PARTY-NOTICES.txt`。安装包未作代码签名。本轮未构建新的冻结 runtime 或 NSIS 安装包，也未替换 `release/` 客户端；冻结后离线运行和真实剪辑质量仍需验收。
+BandIt 原项目采用 Apache-2.0，MSST 推理实现采用 MIT；本地适配说明和许可证保存在 `backend/bandit/`，完整包包含在 `worker/audio/licenses/`。独立对齐包的构建目标为 `worker/alignment/`，携带模型清单、逐文件校验清单、Qwen 的 Apache-2.0 许可证全文和安装 wheel 的第三方许可；模型卡声明 Apache-2.0，全文从 Qwen 软件 wheel 复制并标注来源。其他第三方组件见各 worker 的 `THIRD-PARTY-NOTICES.txt`。安装包未作代码签名。2026-09-30 已完成三个工作进程的冻结构建和离线运行检查，并在原路径更新 NSIS 安装包；真实剪辑质量与整场素材验收仍需继续。
 
 ## 回归与质量性能基线
 
 GitHub Actions 分开运行前端构建/交互回归、Windows Python/DPAPI/FFmpeg 回归，以及独立音频环境的合成分块/重采样/缓存测试；CI 不下载大型模型、不调用真实 AI。
 
-本轮本地自动回归通过 206 项：后端 168 项、前端 17 项、构建脚本 21 项。上述真实素材的预览、导出和机械检查另行记录，自动回归通过不代表主观剪辑质量或字幕已经合格。
+现有自动回归覆盖后端 176 项、前端 26 项、构建脚本 23 项；其中主环境跳过的五项声音测试由独立音频环境验证。免安装工作进程收集新增两项回归，构建脚本 23 项已完整复跑。上述真实素材的预览、导出和机械检查另行记录，自动回归通过不代表主观剪辑质量或字幕已经合格。
 
 `python -X utf8 scripts/benchmark.py synthetic` 用固定 24 秒测试图案/纯音素材跑细剪预览和导出，保存时长、字幕元数据以及 CPU、进程树工作集、I/O 和输出目录占用。真实长录播可通过显式命令测量，再用独立标注和结果 JSON 计算漏剪、误选、重复、受保护内容误删及字幕时间误差。缺少 AI 结果或人工标注时记录“未测”，合成素材通过不代表实际内容识别质量。指标定义、命令与验收范围见 [验收基线](docs/acceptance.md)。
 

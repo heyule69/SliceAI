@@ -4,6 +4,7 @@
     "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
     "build": "tsc --noEmit && vite build",
     "tauri": "tauri", "desktop": "tauri dev", "bundle": "tauri build",
+    "build:portable": "tauri build --no-bundle && python -X utf8 scripts/stage-portable.py",
     "test": "npm run test:backend && npm run test:frontend",
     "test:backend": "node scripts/test-backend.mjs",
     "test:frontend": "node --test tests/frontend.mjs"

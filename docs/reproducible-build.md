@@ -70,6 +70,22 @@ FFmpeg/FFprobe 需在 PATH 中，至少具有 libx264、AAC 和 libass subtitles
 
 `scripts/verify-bandit-integration.py` 是已有本机用户认可样本的专用工具；其样本不在 Git 中，不列为新机器构建的必需步骤。通用合成与真实标注验收见 [acceptance.md](acceptance.md)。构建脚本会写开发资源目录，执行完整构建前应确保没有运行中的客户端工作进程；本次代码修复不自动打包或替换已有客户端。
 
+## 免安装测试与正式安装版
+
+正式交付以 `release/SliceAI_0.2.0_x64-setup.exe` 安装版为主，测试阶段直接运行免安装程序。两者使用同一套源码、模型和工作进程。
+
+完成对应工作进程的构建后，日常桌面验证可以执行：
+
+```powershell
+npm run build:portable
+# 直接运行 src-tauri/target/release/sliceai.exe
+# 保留相邻的整个 worker 目录；后台源码变化时先重建对应工作进程
+```
+
+此命令使用 Tauri 的 `--no-bundle` 生成程序，随后由 `scripts/stage-portable.py` 校验并收集完整工作进程到相邻的 `worker` 目录，跳过 NSIS 压缩。收集前关闭正在使用该构建目录的测试客户端；复制后的模型、运行文件和许可证再次通过验证后才替换旧工作进程，并保留旧目录备份。整个目录替换避免已删除的旧依赖残留。
+
+该命令不依赖安装包存在，不更新 `release/` 中的正式安装包，也不调用正式发布收集脚本。测试确认后再运行 `npm run bundle` 和上述完整发布预检、收集命令。完整发布收集中的便携目录用于测试，交付用户时优先提供安装包。CLI 参数见 [Tauri 官方说明](https://v2.tauri.app/reference/cli/#build)。
+
 ## 字词对齐与完整安装包
 
 细剪完整构建还需要 `alignment-model/Qwen3-ForcedAligner-0.6B` 固定资产和独立 `.alignment-venv`。使用 `scripts/prepare-alignment-model.py` 准备资产，按 `backend/requirements-alignment-lock.txt` 创建独立依赖环境，再运行上述 `build-alignment.py`。具体离线模型约定见 [细剪改造](fine-editing-redesign.md)。打包使用 `--require-alignment`，避免把缺少对齐器的版本当作完整版发布。
@@ -80,11 +96,11 @@ FFmpeg/FFprobe 需在 PATH 中，至少具有 libx264、AAC 和 libass subtitles
 
 ## 其他脚本的适用范围
 
-`scripts/` 还保留历史验收和一次性迁移工具，不能把目录内所有脚本当成新机器的默认构建步骤。当前 41 个 Python 脚本按以下范围核验默认路径：
+`scripts/` 还保留历史验收和一次性迁移工具，不能把目录内所有脚本当成新机器的默认构建步骤。构建相关脚本按以下范围核验默认路径：
 
 | 范围 | 脚本 | 默认输入与前置条件 |
 | --- | --- | --- |
-| 正式准备、构建、基线 | `prepare-asr-model.py`、`prepare-audio-model.py`、`vendor-bandit.py`、`model_assets.py`、`build-worker.py`、`build-audio.py`、`package-release.py`、`benchmark.py`、`test_model_assets.py`、`test_benchmark.py`、`build-brand-icons.py` | 模型按上文显式准备；构建消费本轮生成的资源；打包消费 Tauri 构建结果。基线合成输入和新测试 fixture 自行生成，真实验收输入由参数提供。图标重建是可选操作，读取已提交 SVG，额外需要 Pillow。 |
+| 正式准备、构建、基线 | `prepare-asr-model.py`、`prepare-audio-model.py`、`prepare-alignment-model.py`、`vendor-bandit.py`、`model_assets.py`、`build-worker.py`、`build-audio.py`、`build-alignment.py`、`stage-portable.py`、`package-release.py`、`benchmark.py`、`test_model_assets.py`、`test_alignment_package.py`、`test_portable_staging.py`、`test_benchmark.py`、`build-brand-icons.py` | 模型按上文显式准备；构建消费本轮生成的资源；免安装收集不依赖安装包，完整发布收集消费 Tauri 构建结果。基线合成输入和新测试 fixture 自行生成，真实验收输入由参数提供。图标重建是可选操作，读取已提交 SVG，额外需要 Pillow。 |
 | 浏览器 QA 生成器 | `prepare-desktop-fixes-qa.py`、`prepare-startup-regression.py`、`prepare-fine-wizard-qa.py`、`prepare-ui-harness.py` | 生成到 `.test-artifacts/`；前三者自行构造 mock 状态。`prepare-ui-harness.py` 生成的页面另外读取旧 `release-smoke/result.json`，不属于通用前端回归入口。当前通用入口为 `npm run test:frontend`。 |
 | 历史实录与模型对比 | `analyze-real-recording.py`、`recheck-real-recording.py`、`review-existing-events.py`、`test-fine-wizard-real.py`、`test-v02-real.py`、`test-real-recording.py`、`smoke-release.py`、`measure-memory.py`、`check-v02-audio-text.py`、`export-real-sample.py`、`verify-real-results.py`、`report-source-review.py`、`verify-bandit-integration.py`、`check-audio-cancellation.py`、`check-laughter-retention.py`、`find-laughter-sample.py`、`compare-audio-model.py`、`prepare-audio-comparison.py`、`run-audio-comparison.py`、`finish-audio-comparison.py`、`test-v02-audio.py`、`test-laughter-audio.py`、`package-audio-audition.py` | 默认路径仍依赖旧 `LOCALAPPDATA` 数据库/模型、未提交的录播和试听、`.test-artifacts/` 或 `test-results/`；部分对比工具涉及旧 MossFormer 或未固定的第三方模型下载。这些工具不在上述新机器流程或 CI 中，也不能用于证明当前源码的通用质量。新验收使用参数化 `benchmark.py`。 |
 | 一次性源码迁移 | `finalize-v02-ui.py`、`upgrade-ui-v02.py`、`version-v02.py` | 会改写已提交源码；已完成的历史迁移，不作为构建或验收入口。 |
