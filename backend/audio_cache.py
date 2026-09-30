@@ -50,8 +50,9 @@ def _identities(value):
 
 
 def _linked(path):
+    from path_safety import is_link
     path=Path(path)
-    return path.is_symlink() or (hasattr(path,'is_junction') and path.is_junction())
+    return is_link(path)
 
 
 def _has_link(path, boundary=None):

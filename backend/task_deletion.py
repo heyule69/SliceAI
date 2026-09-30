@@ -3,6 +3,7 @@ from pathlib import Path
 import uuid
 import fine
 from pipeline import ACTIVE
+from path_safety import is_link
 
 
 def delete_task(store, task_id, delete_files=False):
@@ -44,7 +45,7 @@ def delete_task(store, task_id, delete_files=False):
     files, folders = set(), set()
     def add_file(path):
         # Resolve before operating, but reject links rather than deleting their targets.
-        if path.is_symlink() or path.is_junction():
+        if is_link(path):
             raise ValueError('生成文件中存在链接，未删除任务；请先移除该链接。')
         real = path.resolve()
         if real not in protected and real.is_file():
@@ -53,19 +54,19 @@ def delete_task(store, task_id, delete_files=False):
     if delete_files:
         cache_base = store.root / 'tasks'
         cache_root = cache_base.resolve()
-        if cache_base.is_symlink() or cache_base.is_junction() or cache_root.parent != store.root:
+        if is_link(cache_base) or cache_root.parent != store.root:
             raise ValueError('任务缓存目录不在安全位置，未删除任务。')
         for owner in [task_id] + [p['id'] for p in edits]:
             if str(uuid.UUID(owner)) != owner:
                 raise ValueError('任务目录标识无效。')
             folder = store.root / 'tasks' / owner
-            if folder.is_symlink() or folder.is_junction() or folder.resolve().parent != cache_root:
+            if is_link(folder) or folder.resolve().parent != cache_root:
                 raise ValueError('任务目录不在安全位置，未删除任务。')
             if folder.exists():
                 pending = [folder]
                 while pending:
                     entry = pending.pop()
-                    if entry.is_symlink() or entry.is_junction() or not entry.resolve().is_relative_to(folder.resolve()):
+                    if is_link(entry) or not entry.resolve().is_relative_to(folder.resolve()):
                         raise ValueError('任务缓存包含外部链接，未删除任务。')
                     if entry.is_dir():
                         folders.add(entry.resolve())
