@@ -109,7 +109,7 @@ class FineExportTest(unittest.TestCase):
         preview = Path(completed[-1]['preview'])
         stamp = preview.stat().st_mtime_ns
         preview_hash = hashlib.sha256(preview.read_bytes()).digest()
-        chosen = self.root / '指定保存位置'
+        chosen = (self.root / '指定保存位置').resolve()
         chosen.mkdir()
         original_copy = fine.shutil.copy2
         original_write = fine.write_srt
@@ -202,12 +202,12 @@ class FineExportRevealTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '路径无效'):
             self.reveal(project_id=self.project['id'], export_id='saved-record')
         self.assertEqual(self.reveal(task_id=self.task['id']),
-                         {'path': self.task['video'], 'is_file': True})
-        self.assertEqual(self.reveal(), {'path': str(self.store.root), 'is_file': False})
+                         {'path': str(Path(self.task['video']).resolve()), 'is_file': True})
+        self.assertEqual(self.reveal(), {'path': str(self.store.root.resolve()), 'is_file': False})
         self.assertEqual(self.reveal(task_id=self.task['id'], project_id=None, export_id=None),
-                         {'path': self.task['video'], 'is_file': True})
+                         {'path': str(Path(self.task['video']).resolve()), 'is_file': True})
         self.assertEqual(self.reveal(project_id=None, export_id=None),
-                         {'path': str(self.store.root), 'is_file': False})
+                         {'path': str(self.store.root.resolve()), 'is_file': False})
 
 
 if __name__ == '__main__':
