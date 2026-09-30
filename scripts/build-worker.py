@@ -23,7 +23,8 @@ def main():
     for name in ('ffmpeg','ffprobe'):
         source=shutil.which(name)
         if not source:raise SystemExit(f'{name} must be available in PATH before packaging.')
-        shutil.copy2(source,binaries/(name+'.exe'))
+        target=binaries/(name+'.exe')
+        if Path(source).resolve()!=target.resolve():shutil.copy2(source,target)
         for path in (Path(source).parent.parent/'LICENSE',Path(source).parent.parent/'LICENSE.txt'):
             if path.is_file():shutil.copy2(path,binaries/'FFmpeg-LICENSE.txt');break
     (destination/'THIRD-PARTY-NOTICES.txt').write_text(

@@ -60,14 +60,23 @@ npm run test:frontend
 .venv/Scripts/python.exe -X utf8 -m unittest discover -s scripts -p "test_*.py" -v
 .audio-venv/Scripts/python.exe -X utf8 -m unittest discover -s tests -p "test_audio*.py" -v
 .audio-venv/Scripts/python.exe -X utf8 scripts/build-audio.py
+.alignment-venv/Scripts/python.exe -X utf8 scripts/build-alignment.py
 .venv/Scripts/python.exe -X utf8 scripts/build-worker.py
 npm run bundle
-.venv/Scripts/python.exe -X utf8 scripts/package-release.py
+.venv/Scripts/python.exe -X utf8 scripts/package-release.py --require-alignment
 ```
 
 FFmpeg/FFprobe 需在 PATH 中，至少具有 libx264、AAC 和 libass subtitles filter。CI 使用 [Gyan 固定 7.1.1 essentials release](https://github.com/GyanD/codexffmpeg/releases/tag/7.1.1)，记录版本；本地其他构建可用，但质量性能报告应保存准确版本和 build configuration。`build-worker.py` 会携带 PATH 中的工具，因此版本变更需要重新验收。源码/依赖/模型固定不表示安装包字节级一致，PyInstaller、Rust 工具链、操作系统和构建时间仍会影响产物。
 
 `scripts/verify-bandit-integration.py` 是已有本机用户认可样本的专用工具；其样本不在 Git 中，不列为新机器构建的必需步骤。通用合成与真实标注验收见 [acceptance.md](acceptance.md)。构建脚本会写开发资源目录，执行完整构建前应确保没有运行中的客户端工作进程；本次代码修复不自动打包或替换已有客户端。
+
+## 字词对齐与完整安装包
+
+细剪完整构建还需要 `alignment-model/Qwen3-ForcedAligner-0.6B` 固定资产和独立 `.alignment-venv`。使用 `scripts/prepare-alignment-model.py` 准备资产，按 `backend/requirements-alignment-lock.txt` 创建独立依赖环境，再运行上述 `build-alignment.py`。具体离线模型约定见 [细剪改造](fine-editing-redesign.md)。打包使用 `--require-alignment`，避免把缺少对齐器的版本当作完整版发布。
+
+`src-tauri/nsis-template.nsi` 基于 Tauri CLI 2.12.0 的安装模板，保留原安装、升级和卸载流程，只改为逐文件 LZMA 压缩。完整模型资源约 3.9 GB；默认固实压缩在本机触发 NSIS 大文件映射错误。模板来源和许可证随文件保存，后续更新 CLI 时需核对模板兼容性。原始模型与离线加载方式不变；NSIS 最终可执行文件仍受其大小限制，完整构建必须实际验证，不从便携目录大小推断能否打包。
+
+冻结对齐进程须运行真实短音频探针；开发环境通过不能代替冻结验收。日文模块按实际属性访问延迟加载，冻结 PyTorch 的模块元数据检查不会触发它。识别、声音和对齐进程分别构建、验证后再生成安装包。
 
 ## 其他脚本的适用范围
 

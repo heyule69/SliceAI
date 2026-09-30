@@ -49,17 +49,33 @@ def run(args):
     torch.set_num_threads(max(1, min(4, args.threads)))
     torch.set_num_interop_threads(1)
     import soundfile as sf
-    # The upstream aligner eagerly imports its Japanese tokenizer for every
-    # language. Defer that genuine module with Python's standard LazyLoader:
-    # Chinese tokenization never calls it. No tokenizer or timestamps are
-    # substituted. A Japanese request still loads the original package.
+    # Chinese alignment does not use the Japanese tokenizer. Preserve module
+    # metadata during introspection; LazyLoader eagerly executes nagisa when
+    # frozen PyTorch scans __file__ while registering its operators.
+    # Actual tokenizer attributes still load the original package.
     import importlib.util
     if 'nagisa' not in sys.modules:
+        import types
         spec = importlib.util.find_spec('nagisa')
-        spec.loader = importlib.util.LazyLoader(spec.loader)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules['nagisa'] = module
-        spec.loader.exec_module(module)
+        deferred = types.ModuleType('nagisa')
+        deferred.__file__ = spec.origin
+        deferred.__spec__ = spec
+        deferred.__loader__ = spec.loader
+        deferred.__package__ = 'nagisa'
+        deferred.__path__ = spec.submodule_search_locations
+        def load_attribute(name):
+            if name.startswith('__'):
+                raise AttributeError(name)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules['nagisa'] = module
+            try:
+                spec.loader.exec_module(module)
+            except BaseException:
+                sys.modules['nagisa'] = deferred
+                raise
+            return getattr(module, name)
+        deferred.__getattr__ = load_attribute
+        sys.modules['nagisa'] = deferred
     emit({'event': 'loading', 'stage': 'import_qwen'})
     from qwen_asr import Qwen3ForcedAligner
     # Windows/PyTorch can fault while slicing mmap-backed safetensors. Use the

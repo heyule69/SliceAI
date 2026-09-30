@@ -9,5 +9,5 @@
       "assetProtocol":{"enable":true,"scope":[]}
     }
   },
-  "bundle":{"active":true,"targets":["nsis"],"icon":["icons/icon.ico"],"resources":{"resources/worker/":"worker/"},"shortDescription":"导入长录播，自动发现和导出精彩片段","windows":{"nsis":{"languages":["SimpChinese"],"displayLanguageSelector":false,"installMode":"currentUser"}}}
+  "bundle":{"active":true,"targets":["nsis"],"icon":["icons/icon.ico"],"resources":{"resources/worker/":"worker/"},"shortDescription":"导入长录播，自动发现和导出精彩片段","windows":{"nsis":{"languages":["SimpChinese"],"displayLanguageSelector":false,"installMode":"currentUser","template":"nsis-template.nsi"}}}
 }
