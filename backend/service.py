@@ -166,7 +166,21 @@ def dispatch(request):
                                {'role':'user','content':'Reply with {"ok":true}.'}],store,on_usage=usage.update)
             return {'ok':True,'model':settings['api_model'],'usage':usage}
         if cmd=='reveal':
-            if request.get('task_id'):
+            if request.get('project_id') is not None or request.get('export_id') is not None:
+                project_id=request.get('project_id');export_id=request.get('export_id')
+                if not isinstance(project_id,str) or not project_id.strip() or not isinstance(export_id,str) or not export_id.strip():
+                    raise ValueError('请提供有效的细剪项目与导出记录。')
+                import fine
+                project=fine.get(store,project_id)
+                record=next((r for r in project.get('exports',[]) if isinstance(r,dict) and r.get('id')==export_id),None)
+                if record is None:raise ValueError('此细剪项目没有该导出记录。')
+                raw=record.get('path')
+                if not isinstance(raw,str) or not raw or '\x00' in raw or not Path(raw).is_absolute():
+                    raise ValueError('导出记录的文件路径无效。')
+                path=Path(raw)
+                if not path.is_file():raise ValueError('导出文件已被移动或删除。')
+                path=path.resolve().parent
+            elif request.get('task_id'):
                 task=store.get(request['task_id']);path=Path(task.get('output_folder') or task['video']).resolve()
             else:path=store.root
             if not path.exists():raise ValueError('目标文件夹已被移动或删除。')

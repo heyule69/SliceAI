@@ -10,7 +10,7 @@ import { sameView, SubtitleDrafts, cueFingerprint, type ViewTicket, type QueueEn
 type Cue={id:number;start:number;end:number;text:string};
 type Range={start:number;end:number;reason:string};
 type Version=CutResultVersion&{id:string;number:number;confirmed:boolean;summary:string;ranges:Range[];reordered:boolean;subtitles:boolean;audio_strength:number;audio_engine?:string|null;cues:Cue[];preview:string;caption_review?:{needs_review:number[]}};
-type Project={execution?:Execution;source_preview?:{path:string};edit_options?:EditOptions;question_step?:number;id:string;revision:number;task_id:string;clip_id:number;title:string;status:string;stage:string;error:string;source_start:number;source_end:number;messages:{role:string;content:string}[];versions:Version[];current_version:string|null;audio_sample?:{engine?:string;original:{path:string};processed:{path:string}};exports:{path:string;version_id:string}[]};
+type Project={execution?:Execution;source_preview?:{path:string};edit_options?:EditOptions;question_step?:number;id:string;revision:number;task_id:string;clip_id:number;title:string;status:string;stage:string;error:string;source_start:number;source_end:number;messages:{role:string;content:string}[];versions:Version[];current_version:string|null;audio_sample?:{engine?:string;original:{path:string};processed:{path:string}};exports:{id:string;path:string;version_id:string}[]};
 const AUDIO_ENGINE='bandit-plus-dnr-11.47-speech-v1';
 const esc=(s:unknown)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 const $=<T extends HTMLElement=HTMLElement>(id:string)=>document.getElementById(id) as T;
@@ -24,6 +24,9 @@ export class FineWorkspace {
  private drafts=new SubtitleDrafts(localStorage,()=>{if(!this.draftWarning){this.draftWarning=true;this.toast('本地字幕草稿无法写入磁盘；当前窗口仍保留修改，请点击保存字幕。');}});
  private cueSaves=new Map<string,{projectId:string;versionId:string;baseline:Cue[];submitted:Cue[]}>();
  private dialogTicket:ViewTicket|null=null;
+ private exportVersionId:string|null=null;
+ private exportFolder='';
+ private selectingExportFolder=false;
  private queueEntries:QueueEntry[]=[];
  constructor(private navigate:(page:string)=>void,private toast:(msg:unknown)=>void,private refresh:()=>Promise<void>,private activity:()=>void=()=>{}){
   document.addEventListener('click',e=>{const el=(e.target as Element).closest<HTMLElement>('[data-fine-action]');if(el)void this.guard(()=>this.action(el.dataset.fineAction!,el));});
@@ -61,6 +64,10 @@ export class FineWorkspace {
   if(event.cmd==='edit_source_preview'&&event.result&&!event.result.error){this.source=event.result.source_preview?.path||'';this.sourceInfo={path:this.source,start:0,end:event.result.source_end-event.result.source_start};}
   this.activity();this.render();
   if(event.message)this.toast(event.message);if(event.result?.error)this.toast(event.result.error);
+  if(event.type==='finished'&&event.cmd==='edit_export'&&event.result&&!executionIssue(event.result)){
+   const saved=event.result.exports.filter(record=>record.version_id===event.result!.current_version).at(-1);
+   if(saved)this.toast(`成片已保存：${saved.path}`);
+  }
   if(event.cmd==='edit_export')void this.refresh();
  }
  private completeCueSave(project:Project){
@@ -72,7 +79,7 @@ export class FineWorkspace {
  updateQueue(entries:QueueEntry[]){this.queueEntries=entries;this.render();}
  clearDrafts(projectId:string){this.drafts.removeProject(projectId);}
  leave(){this.persistCues();++this.sourceToken;$<HTMLVideoElement>('fineVideo')?.pause();this.closeOwnDialog();}
- private closeOwnDialog(){if(this.dialogTicket){$<HTMLDialogElement>('modal').close();this.dialogTicket=null;}}
+ private closeOwnDialog(){if(this.dialogTicket){$<HTMLDialogElement>('modal').close();this.dialogTicket=null;this.exportVersionId=null;}}
  async guard(fn:()=>Promise<unknown>){try{await fn();}catch(e){this.toast(e instanceof Error?e.message:e);}}
  current(){return this.p?.versions.find(v=>v.id===this.p?.current_version);}
  rememberChoices(){if(this.p){try{localStorage.setItem('fine-choices:'+this.p.id,JSON.stringify({options:this.answers,step:this.step}));}catch{this.toast('问答选择暂时无法在本机缓存，保存后仍可恢复。');}}}
@@ -93,7 +100,9 @@ export class FineWorkspace {
 
   if(!this.wizard){
    const result=v?cutResult(v,p.source_start,p.source_end):null;
-   body.innerHTML=`<div class="question-result">${executionOutcome(p,!!v?.preview,!!result?.unchanged)}<span class="question-kicker">${v?.preview?'预览已生成':'剪辑进度'}</span><h3>${result?`${stamp(result.sourceDuration)} → ${stamp(result.outputDuration)}`:'按你的选择处理'}</h3>${v?cutSummaryHtml(v,p.source_start,p.source_end):''}${p.error?`<p class="error-note" role="alert">${esc(p.error)}</p>`:`<p>${esc(v?.summary||p.stage)}</p>`}${v?.caption_review?.needs_review.length?`<button class="question-check-link" data-fine-action="tab" data-tab="subtitles">${v.caption_review.needs_review.length} 条字幕待核对 · 查看</button>`:''}${v?.preview&&executionIssue(p)&&p.execution?.command!=='edit_export'?'<button class="text-button" data-fine-action="retry">重试本次处理</button>':''}<div class="question-receipt">${summary(this.answers).map(r=>`<span>${esc(r.value)}</span>`).join('')}</div></div>`;
+   const saved=p.exports.filter(record=>record.version_id===v?.id).at(-1);
+   const exportReceipt=saved?`<div class="fine-export-result"><b>最近导出</b><p class="file-location">${esc(saved.path)}</p>${saved.id?`<button class="secondary-button" data-fine-action="reveal-export" data-export-id="${esc(saved.id)}">打开保存文件夹</button>`:''}</div>`:'';
+   body.innerHTML=`<div class="question-result">${executionOutcome(p,!!v?.preview,!!result?.unchanged)}${exportReceipt}<span class="question-kicker">${v?.preview?'预览已生成':'剪辑进度'}</span><h3>${result?`${stamp(result.sourceDuration)} → ${stamp(result.outputDuration)}`:'按你的选择处理'}</h3>${v?cutSummaryHtml(v,p.source_start,p.source_end):''}${p.error?`<p class="error-note" role="alert">${esc(p.error)}</p>`:`<p>${esc(v?.summary||p.stage)}</p>`}${v?.caption_review?.needs_review.length?`<button class="question-check-link" data-fine-action="tab" data-tab="subtitles">${v.caption_review.needs_review.length} 条字幕待核对 · 查看</button>`:''}${v?.preview&&executionIssue(p)&&p.execution?.command!=='edit_export'?'<button class="text-button" data-fine-action="retry">重试本次处理</button>':''}<div class="question-receipt">${summary(this.answers).map(r=>`<span>${esc(r.value)}</span>`).join('')}</div></div>`;
    const issue=executionIssue(p),exportIssue=issue&&p.execution?.command==='edit_export';
    const action=v?.preview?'preview':issue?(exportIssue?'export':'retry'):'confirm';
    const label=v?.preview?'查看成片':issue?(exportIssue?'重新导出':'重新处理'):'生成预览';
@@ -158,12 +167,12 @@ export class FineWorkspace {
   $('fineSourceStatus').hidden=this.mode!=='source'||!!this.source;
   $('fineSourceStatus').textContent=this.sourceError||'正在打开片段…';
   $('fineTitle').textContent=p.title;$('fineTitle').title=p.title;
-  $<HTMLButtonElement>('fineExport').disabled=busy||!v?.confirmed;
+  $<HTMLButtonElement>('fineExport').disabled=busy||this.selectingExportFolder||!v?.confirmed;
   $<HTMLButtonElement>('fineConfirm').disabled=busy||!v;
   $('fineConfirm').hidden=!v;
   $('fineConfirm').textContent=v?.preview?'查看成片':v?.confirmed?'生成预览':'确认并预览';
   $('fineConfirm').dataset.fineAction=v?.preview?'preview':'confirm';
-  $('fineExport').textContent=!busy&&p.execution?.command==='edit_export'&&executionIssue(p)?'重新导出':'导出成片';
+  $('fineExport').textContent=this.selectingExportFolder?'选择文件夹…':!busy&&p.execution?.command==='edit_export'&&executionIssue(p)?'重新导出':'导出成片';
   $('fineCancel').hidden=!busy;
   $('fineQuestionHeading').textContent=busy?'正在处理':(!this.wizard?'剪辑结果':'剪辑要求');
   $('fineTabs').innerHTML=`<button data-fine-action="source" class="${this.mode==='source'?'active':''}">粗剪片段</button><button data-fine-action="preview" class="${this.mode==='preview'?'active':''}" ${!v?.preview?'disabled':''}>成片</button><span></span>${[['plan','方案'],['subtitles','字幕'],['audio','声音'],['versions','版本']].map(([key,label])=>`<button data-fine-action="tab" data-tab="${key}" class="${this.tab===key?'active':''}">${label}</button>`).join('')}`;
@@ -197,10 +206,11 @@ export class FineWorkspace {
  async action(action:string,el:HTMLElement){
   if(!this.p)return;const p=this.p,v=this.current(),ticket=this.ticket();
   if(action==='back'){this.rememberChoices();this.navigate('results');return;}
-  if(['export-confirm','trim-save'].includes(action)&&(!this.dialogTicket||!this.active(this.dialogTicket))){this.closeOwnDialog();this.toast('项目已变化，请重新打开操作。');return;}
+  if(['export-confirm','export-folder','trim-save'].includes(action)&&(!this.dialogTicket||!this.active(this.dialogTicket))){this.closeOwnDialog();this.toast('项目已变化，请重新打开操作。');return;}
   if(action==='tab'){this.tab=el.dataset.tab!;this.render();return;}
   if(action==='source'||action==='preview'){this.mode=action;this.render();return;}
   if(action==='cancel'){await call('edit_cancel',{project_id:p.id});return;}
+  if(action==='reveal-export'){await invoke('reveal',{taskId:null,projectId:p.id,exportId:el.dataset.exportId});return;}
   if(action==='seek-source'||action==='seek-cue'){
    let t=Number(el.dataset.seconds);
    if(action==='seek-source')this.mode='source';
@@ -210,7 +220,7 @@ export class FineWorkspace {
    this.render();this.player?.seek(t);return;
   }
   if(this.pending||['busy','queued'].includes(p.status))return;
-  if(action==='retry'){const cmd=p.execution?.command||'edit_auto';await this.queue(['edit_auto','edit_preview','edit_confirm','edit_export','edit_audio_sample','edit_source_preview'].includes(cmd)?cmd:'edit_auto',cmd==='edit_auto'?{options:this.answers}:{});return;}
+  if(action==='retry'){const cmd=p.execution?.command||'edit_auto';if(cmd==='edit_export'){await this.action('export',el);return;}await this.queue(['edit_auto','edit_preview','edit_confirm','edit_audio_sample','edit_source_preview'].includes(cmd)?cmd:'edit_auto',cmd==='edit_auto'?{options:this.answers}:{});return;}
   if(action==='question-prev'||action==='question-next'){
    if(this.saving)return;const next=Math.max(0,Math.min(5,this.step+(action==='question-next'?1:-1)));
    if(await this.saveChoices(next))this.render();return;
@@ -252,11 +262,30 @@ export class FineWorkspace {
    if(this.active(ticket)){this.source=src.path;this.sourceInfo=src;this.render();}
    await this.refresh();return;
   }
-  if(action==='export'){
-   this.dialogTicket=ticket;
-   const dialog=$<HTMLDialogElement>('modal');$('modalContent').innerHTML='<h2 class="modal-title">导出细剪成片</h2><label class="check-row"><input id="fineSrt" type="checkbox">另存 SRT 字幕</label><div class="modal-footer"><button class="primary-button" data-fine-action="export-confirm">开始导出</button></div>';dialog.showModal();return;
+  if(action==='export'||action==='export-folder'){
+   if(!v?.confirmed){this.toast('请先确认当前方案，再导出成片。');return;}
+   if(!isTauri()){this.toast('请在 SliceAI 桌面程序中选择文件夹并导出。');return;}
+   if(this.selectingExportFolder)return;
+   const versionId=v.id,srt=action==='export-folder'&&$<HTMLInputElement>('fineSrt').checked;
+   this.selectingExportFolder=true;this.render();
+   try{
+    const folder=await open({directory:true,multiple:false,title:'选择成片保存文件夹',...(this.exportFolder?{defaultPath:this.exportFolder}:{})});
+    if(!this.active(ticket)||this.current()?.id!==versionId)return;
+    if(typeof folder!=='string'||!folder.trim()){this.toast(action==='export-folder'?'保存位置未改变。':'已取消导出，未保存文件。');return;}
+    this.exportFolder=folder;this.exportVersionId=versionId;this.dialogTicket=ticket;
+    const dialog=$<HTMLDialogElement>('modal');
+    $('modalContent').innerHTML=`<h2 class="modal-title">导出细剪成片</h2><div class="modal-field"><label for="fineExportDir">保存到</label><div class="input-action"><input id="fineExportDir" readonly value="${esc(folder)}" title="${esc(folder)}"><button class="secondary-button" data-fine-action="export-folder">更改</button></div></div><p class="modal-description">成片和另存字幕直接保存在这个文件夹。</p><label class="check-row"><input id="fineSrt" type="checkbox" ${srt?'checked':''}>另存 SRT 字幕</label><div class="modal-footer"><button class="primary-button" data-fine-action="export-confirm">开始导出</button></div>`;
+    if(!dialog.open)dialog.showModal();
+   }finally{this.selectingExportFolder=false;this.render();}
+   return;
   }
-  if(action==='export-confirm'){const srt=$<HTMLInputElement>('fineSrt').checked;this.closeOwnDialog();await this.queue('edit_export',{srt});return;}
+  if(action==='export-confirm'){
+   if(this.selectingExportFolder)return;
+   if(!v?.confirmed||v.id!==this.exportVersionId){this.closeOwnDialog();this.toast('方案已变化，请重新选择导出位置。');return;}
+   if(!this.exportFolder){this.toast('请先选择保存文件夹。');return;}
+   const srt=$<HTMLInputElement>('fineSrt').checked,export_dir=this.exportFolder,version_id=v.id;
+   this.closeOwnDialog();await this.queue('edit_export',{export_dir,srt,version_id});return;
+  }
   if(action==='trim'&&v){
    this.dialogTicket=ticket;
    const dialog=$<HTMLDialogElement>('modal');$('modalContent').innerHTML=`<h2 class="modal-title">微调保留区间</h2><p class="settings-caption">秒数相对原片段；保存后重新确认方案。</p><div class="trim-rows">${v.ranges.map((r,i)=>`<div class="trim-row"><label>${i+1}<input data-trim-start type="number" min="0" step="0.01" value="${(r.start-p.source_start).toFixed(2)}" aria-label="区间 ${i+1} 开始"></label><span>—</span><input data-trim-end type="number" step="0.01" value="${(r.end-p.source_start).toFixed(2)}" aria-label="区间 ${i+1} 结束"></div>`).join('')}</div><div class="modal-footer"><button class="primary-button" data-fine-action="trim-save">保存区间</button></div>`;dialog.showModal();return;

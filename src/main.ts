@@ -152,7 +152,7 @@ function renderLists() {
  const query=$<HTMLInputElement>('taskSearch').value.toLowerCase();
  reconcileTaskRows($('allTasks'),tasks.filter(t=>(filter==='all'||t.status===filter)&&t.title.toLowerCase().includes(query)).map(t=>({id:t.id,html:taskRow(t)})),'<div class="empty-state">没有符合条件的任务</div>');
  const exportsHTML=tasks.flatMap(task=>task.exports.map(record=>`<div class="export-record">${icon('film')}<div><h3>${esc(filename(record.path))}</h3>${record.source_warning?'<span class="source-history-warning">历史导出 · 本次来源复核未通过</span>':''}<p>${esc(task.title)} · ${record.mode==='compilation'?'精彩合集':'独立片段'} · ${time(record.duration)} · ${date(record.created)}</p><p class="file-location">${esc(record.path)}</p></div><button class="secondary-button" data-reveal="${task.id}">打开文件夹 ${icon('folder')}</button></div>`)).join('');
- const fineExports=(state?.edits||[]).flatMap(p=>p.exports.map(r=>`<div class="export-record fine-export">${icon('film')}<div><h3>${esc(filename(r.path))}</h3><p>${esc(p.title)} · 细剪成片 · ${time(r.duration)}</p><p class="file-location">${esc(r.path)}</p></div><button class="secondary-button" data-reveal="${p.task_id}">打开文件夹</button></div>`)).join('');
+ const fineExports=(state?.edits||[]).flatMap(p=>p.exports.map(r=>`<div class="export-record fine-export">${icon('film')}<div><h3>${esc(filename(r.path))}</h3><p>${esc(p.title)} · 细剪成片 · ${time(r.duration)}</p><p class="file-location">${esc(r.path)}</p></div><button class="secondary-button" data-reveal-project="${esc(p.id)}" data-reveal-export="${esc(r.id)}">打开文件夹</button></div>`)).join('');
  patchHTML($('exportRecords'),fineExports+exportsHTML||'<div class="empty-state">暂无导出记录</div>');
 }
 function deleteTaskModal(id:string){
@@ -253,6 +253,7 @@ document.addEventListener('click',event=>{
  if(d.preview)void guarded(()=>preview(Number(d.preview)));
  if(d.export)exportModal(d.export);
  if(d.reveal)void guarded(()=>invoke('reveal',{taskId:d.reveal}));
+ if(d.revealProject&&d.revealExport)void guarded(()=>invoke('reveal',{taskId:null,projectId:d.revealProject,exportId:d.revealExport}));
  if(d.cancel)void guarded(async()=>{target.setAttribute('disabled','');const task=await call<Task>('cancel_task',{task_id:d.cancel});upsert(task);toast('已请求取消，正在停止处理…');});
  if(d.recheck)void guarded(async()=>{if(pending.has(d.recheck!))return;await queue('recheck',d.recheck);closeModal();toast('开始复核来源，将复用已有转写和有效画面结果');renderTask(state!.tasks.find(t=>t.id===d.recheck)!);});
  if(d.retry)void guarded(async()=>{target.setAttribute('disabled','');try{const task=await call<Task>('retry_task',{task_id:d.retry});upsert(task);await queue('run',task.id);showTask(task.id);}finally{target.removeAttribute('disabled');}});

@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import shutil
+import tempfile
 import uuid
 from pathlib import Path
 from engine import Cancelled, chat_api, check_cancel, command, decode_json, emit, probe, tool_path
@@ -131,6 +132,28 @@ def subtitle_lines(cues):
             end=c['start']+(c['end']-c['start'])*(i+1)/len(pieces)
             out.append({'start':start,'end':end,'text':t[:18]+('\n'+t[18:] if len(t)>18 else '')})
     return out
+
+
+def export_directory(request,runner):
+    if 'export_dir' in request:
+        raw=request['export_dir']
+        if not isinstance(raw,str) or not raw.strip() or raw!=raw.strip() or '\x00' in raw:
+            raise ValueError('请选择有效的绝对导出文件夹。')
+        folder=Path(raw)
+        if not folder.is_absolute():raise ValueError('导出文件夹必须是绝对路径。')
+        try:folder=folder.resolve(strict=True)
+        except (OSError,ValueError):raise ValueError('导出文件夹不存在或无法访问，请重新选择。') from None
+        if not folder.is_dir():raise ValueError('请选择已存在的导出文件夹，不能选择文件。')
+    else:
+        try:
+            folder=(runner.output_folder()/'细剪').resolve()
+            folder.mkdir(exist_ok=True)
+        except OSError:raise ValueError('无法准备导出文件夹，请检查权限或磁盘空间。') from None
+    try:
+        with tempfile.TemporaryFile(dir=folder) as test:
+            test.write(b'SliceAI');test.flush()
+    except OSError:raise ValueError('导出文件夹无法写入，请检查权限或磁盘空间。') from None
+    return folder
 
 
 class Editor:
@@ -272,7 +295,10 @@ class Editor:
 
     def render(self,export=False):
         v=self.current()
+        if export and 'version_id' in self.req and self.req['version_id']!=v['id']:
+            raise ValueError('当前版本已变化，请重新打开导出窗口后保存。')
         if not v['confirmed']:raise ValueError('请先确认当前剪辑方案。')
+        out=export_directory(self.req,self.runner) if export else None
         check_cancel(self.store,self.p['id'])
         source=Path(self.task['video'])
         if not source.is_file():raise ValueError('原录播已移动，请重新定位素材。')
@@ -374,13 +400,26 @@ class Editor:
                 if audio:audio.unlink(missing_ok=True)
         if export:
             self.persist('写入导出文件')
-            out=self.runner.output_folder()/'细剪';out.mkdir(exist_ok=True)
-            token=uuid.uuid4().hex[:8];target=out/f'{safe_name(self.p["title"])}_v{v["number"]}_{token}.mp4'
-            temp=target.with_suffix('.partial.mp4');shutil.copy2(final,temp);temp.replace(target)
-            srt=''
-            if self.req.get('srt'):
-                srt=str(target.with_suffix('.srt'));write_srt(srt,subtitle_lines(v['cues']))
-            self.p['exports'].append({'id':token,'path':str(target),'subtitle':srt,'duration':v['duration'],'version_id':v['id'],'created':now()})
+            token=uuid.uuid4().hex;target=out/f'{safe_name(self.p["title"])}_v{v["number"]}_{token}.mp4'
+            temp=target.with_suffix('.partial.mp4')
+            subtitle=target.with_suffix('.srt');subtitle_temp=target.with_suffix('.partial.srt')
+            published=[]
+            try:
+                shutil.copy2(final,temp)
+                check_cancel(self.store,self.p['id'])
+                if self.req.get('srt'):write_srt(subtitle_temp,subtitle_lines(v['cues']))
+                check_cancel(self.store,self.p['id'])
+                temp.replace(target);published.append(target)
+                if self.req.get('srt'):
+                    subtitle_temp.replace(subtitle);published.append(subtitle)
+                check_cancel(self.store,self.p['id'])
+            except BaseException:
+                for path in published:path.unlink(missing_ok=True)
+                raise
+            finally:
+                temp.unlink(missing_ok=True);subtitle_temp.unlink(missing_ok=True)
+            self.p['exports'].append({'id':token,'path':str(target),'subtitle':str(subtitle) if self.req.get('srt') else '',
+                                     'duration':v['duration'],'version_id':v['id'],'created':now()})
         else:v['preview']=str(final);v['render_key']=key
 
     def run(self):

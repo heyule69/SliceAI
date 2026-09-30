@@ -61,6 +61,40 @@ function workspace() {
   return fine;
 }
 
+async function withExportWorkspace(chooseDirectory, check) {
+  const getElementById = document.getElementById, open = testBridge.open;
+  const requests = [], openings = [], messages = [], nodes = new Map();
+  const modal = { open: false, shown: 0, closed: 0,
+    showModal() { this.open = true; this.shown++; },
+    close() { this.open = false; this.closed++; } };
+  const srt = { checked: false };
+  const decode = value => value.replace(/&quot;|&#39;|&lt;|&gt;|&amp;/g,
+    entity => ({ '&quot;': '"', '&#39;': "'", '&lt;': '<', '&gt;': '>', '&amp;': '&' })[entity]);
+  let html = '';
+  const content = { get innerHTML() { return html; }, set innerHTML(value) {
+    html = value;
+    for (const [id, node] of nodes) if (node.readOnly) nodes.delete(id);
+    srt.checked = /<input\b[^>]*\bid="fineSrt"[^>]*\bchecked\b/i.test(value);
+    for (const input of value.matchAll(/<input\b[^>]*>/gi)) {
+      const id = input[0].match(/\bid="([^"]+)"/), path = input[0].match(/\bvalue="([^"]*)"/);
+      if (id && /\breadonly\b/i.test(input[0])) nodes.set(id[1], { readOnly: true, value: decode(path?.[1] || '') });
+    }
+  } };
+  nodes.set('modal', modal); nodes.set('modalContent', content); nodes.set('fineSrt', srt);
+  document.getElementById = id => nodes.get(id) ?? getElementById.call(document, id);
+  testBridge.open = async options => { openings.push(options); return chooseDirectory(options); };
+  try {
+    const fine = new FineWorkspace(() => {}, message => messages.push(message), async () => {});
+    fine.renderQuestions = () => {}; fine.render = () => {};
+    fine.p = project('A'); fine.current().confirmed = true;
+    fine.queue = async (cmd, values) => { requests.push({ cmd, values }); };
+    await check({ fine, requests, openings, messages, modal, content, srt,
+      directoryField: () => [...nodes.values()].find(node => node.readOnly) });
+  } finally {
+    document.getElementById = getElementById; testBridge.open = open;
+  }
+}
+
 test('changing recordings clears both attachments and resets the selected audio track', () => {
   assert.deepEqual(bindImportedVideo({ video: 'D:\\A.mp4', subtitle: 'A.srt', chat: 'A.xml', audioTrack: 2 }, 'D:\\B.mp4'),
     { video: 'D:\\B.mp4', subtitle: '', chat: '', audioTrack: 0 });
@@ -243,4 +277,114 @@ test('partially deleted candidates show each effective cut rather than the full 
   assert.match(html, /手动应用/); assert.match(html, /restore-candidate/);
   version.cut_ledger[0].effective_intervals = [];
   assert.doesNotMatch(cutLedgerHtml(version, 100), /restore-candidate|data-seconds=/);
+});
+
+test('fine export selects a directory and submits that path, SRT choice, and the confirmed version', async () => {
+  const directory = 'D:\\Exports\\精剪成片';
+  await withExportWorkspace(async () => directory, async ({ fine, requests, openings, modal, content, srt, directoryField }) => {
+    await fine.action('export', { dataset: {} });
+    assert.equal(openings.length, 1);
+    assert.equal(openings[0].directory, true); assert.equal(openings[0].multiple, false);
+    assert.equal(openings[0].title, '选择成片保存文件夹');
+    assert.equal(modal.shown, 1); assert.equal(modal.open, true); assert.deepEqual(requests, []);
+    assert.match(content.innerHTML, /fineSrt/);
+    assert.equal(directoryField()?.readOnly, true); assert.equal(directoryField()?.value, directory);
+    srt.checked = true;
+    await fine.action('export-confirm', { dataset: {} });
+    assert.deepEqual(requests, [{ cmd: 'edit_export', values: { export_dir: directory, srt: true, version_id: 'v-A' } }]);
+    assert.equal(modal.open, false);
+  });
+});
+
+test('canceling the export directory picker creates neither a confirmation modal nor a task', async () => {
+  await withExportWorkspace(async () => null, async ({ fine, requests, openings, modal }) => {
+    await fine.action('export', { dataset: {} });
+    assert.equal(openings.length, 1); assert.equal(modal.shown, 0); assert.equal(modal.open, false);
+    assert.deepEqual(requests, []);
+    await fine.action('export-confirm', { dataset: {} });
+    assert.deepEqual(requests, []);
+  });
+});
+
+test('a delayed export directory cannot open a modal or enqueue work after changing projects', async () => {
+  const waiting = deferred();
+  await withExportWorkspace(() => waiting.promise, async ({ fine, requests, openings, modal }) => {
+    const selecting = fine.action('export', { dataset: {} });
+    assert.equal(openings.length, 1);
+    fine.p = project('B'); fine.current().confirmed = true; fine.sourceToken++;
+    waiting.resolve('D:\\Exports\\old-project'); await selecting;
+    assert.equal(fine.p.id, 'B'); assert.equal(modal.shown, 0); assert.deepEqual(requests, []);
+  });
+});
+
+test('a delayed export directory cannot open a modal or enqueue work after changing versions', async () => {
+  const waiting = deferred();
+  await withExportWorkspace(() => waiting.promise, async ({ fine, requests, openings, modal }) => {
+    const selecting = fine.action('export', { dataset: {} });
+    assert.equal(openings.length, 1);
+    fine.p.versions.push({ ...fine.current(), id: 'v-A-restored', confirmed: true });
+    fine.p.current_version = 'v-A-restored';
+    waiting.resolve('D:\\Exports\\old-version'); await selecting;
+    assert.equal(fine.current().id, 'v-A-restored'); assert.equal(modal.shown, 0); assert.deepEqual(requests, []);
+  });
+});
+
+test('an export confirmation rejects a version changed while the modal was open', async () => {
+  await withExportWorkspace(async () => 'D:\\Exports\\chosen', async ({ fine, requests, messages, modal }) => {
+    await fine.action('export', { dataset: {} }); assert.equal(modal.open, true);
+    fine.p.versions.push({ ...fine.current(), id: 'v-A-new', confirmed: true });
+    fine.p.current_version = 'v-A-new';
+    await fine.action('export-confirm', { dataset: {} });
+    assert.deepEqual(requests, []); assert.ok(messages.length > 0);
+  });
+});
+
+test('an unconfirmed fine version cannot select an export directory or submit work', async () => {
+  await withExportWorkspace(async () => 'D:\\Exports\\chosen', async ({ fine, requests, openings, modal }) => {
+    fine.current().confirmed = false;
+    await fine.action('export', { dataset: {} });
+    assert.deepEqual(openings, []); assert.equal(modal.shown, 0); assert.deepEqual(requests, []);
+  });
+});
+
+test('changing the export folder updates the destination and canceling a later change retains it', async () => {
+  const original = 'D:\\Exports\\first', changedDirectory = 'E:\\Finished\\second';
+  const selections = [original, changedDirectory, null];
+  await withExportWorkspace(async () => selections.shift(), async ({ fine, requests, openings, modal, srt, directoryField }) => {
+    await fine.action('export', { dataset: {} });
+    srt.checked = true;
+    await fine.action('export-folder', { dataset: {} });
+    assert.equal(directoryField()?.value, changedDirectory); assert.equal(srt.checked, true);
+    await fine.action('export-folder', { dataset: {} });
+    assert.equal(directoryField()?.value, changedDirectory); assert.equal(modal.open, true); assert.equal(srt.checked, true);
+    assert.equal(openings.length, 3); assert.deepEqual(requests, []);
+    await fine.action('export-confirm', { dataset: {} });
+    assert.deepEqual(requests, [{ cmd: 'edit_export', values: { export_dir: changedDirectory, srt: true, version_id: 'v-A' } }]);
+  });
+});
+
+test('repeated export clicks share one pending directory selection and create no task', async () => {
+  const waiting = deferred();
+  await withExportWorkspace(() => waiting.promise, async ({ fine, requests, openings, modal }) => {
+    const first = fine.action('export', { dataset: {} }), second = fine.action('export', { dataset: {} });
+    const count = openings.length;
+    waiting.resolve('D:\\Exports\\chosen'); await Promise.all([first, second]);
+    assert.equal(count, 1); assert.equal(modal.shown, 1); assert.deepEqual(requests, []);
+  });
+});
+
+test('a rejected directory picker releases the selection lock and allows a fresh export', async () => {
+  const directory = 'D:\\Exports\\retry'; let attempts = 0;
+  await withExportWorkspace(async () => {
+    if (attempts++ === 0) throw Error('directory picker unavailable');
+    return directory;
+  }, async ({ fine, requests, openings, messages, modal }) => {
+    await fine.guard(() => fine.action('export', { dataset: {} }));
+    assert.equal(openings.length, 1); assert.equal(modal.shown, 0); assert.deepEqual(requests, []);
+    assert.deepEqual(messages, ['directory picker unavailable']);
+    await fine.action('export', { dataset: {} });
+    assert.equal(openings.length, 2); assert.equal(modal.shown, 1); assert.deepEqual(requests, []);
+    await fine.action('export-confirm', { dataset: {} });
+    assert.deepEqual(requests, [{ cmd: 'edit_export', values: { export_dir: directory, srt: false, version_id: 'v-A' } }]);
+  });
 });

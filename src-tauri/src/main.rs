@@ -156,10 +156,10 @@ fn enqueue(app: tauri::AppHandle, runtime: tauri::State<'_, Arc<Runtime>>, reque
 }
 
 #[tauri::command]
-async fn reveal(app: tauri::AppHandle, runtime: tauri::State<'_, Arc<Runtime>>, task_id: Option<String>) -> Result<(), String> {
+async fn reveal(app: tauri::AppHandle, runtime: tauri::State<'_, Arc<Runtime>>, task_id: Option<String>, project_id: Option<String>, export_id: Option<String>) -> Result<(), String> {
     let runtime = runtime.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let result = worker_call(&app, &runtime, json!({"cmd":"reveal","task_id":task_id}))?;
+        let result = worker_call(&app, &runtime, json!({"cmd":"reveal","task_id":task_id,"project_id":project_id,"export_id":export_id}))?;
         let path = result["path"].as_str().ok_or("目标不存在")?;
         #[cfg(windows)]
         { let mut command = Command::new("explorer.exe");
