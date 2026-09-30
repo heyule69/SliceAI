@@ -1,13 +1,21 @@
 import contextlib,io,tempfile,unittest,sys
 from pathlib import Path
 from unittest.mock import patch
+from types import SimpleNamespace
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'backend'))
 from storage import Store
 from pipeline import model_dir,model_ready
+import pipeline
 from service import install_model
 
 
 class BundledAsrTest(unittest.TestCase):
+    def test_development_uses_prepared_repo_model(self):
+        from pathlib import Path
+        expected=Path(pipeline.__file__).resolve().parents[1]/'asr-model/SenseVoice'
+        with patch.object(pipeline.sys,'frozen',False,create=True),patch('pipeline.model_files_ready',side_effect=lambda p:p==expected):
+            self.assertEqual(pipeline.model_dir(SimpleNamespace(root=expected.parent/'unused'),{}),expected)
+
     def test_clean_profile_uses_packaged_model_without_network_or_copy(self):
         with tempfile.TemporaryDirectory() as temp:
             store=Store(Path(temp)/'new-profile');bundle=Path(temp)/'worker/models/sensevoice-int8'

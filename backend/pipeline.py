@@ -46,6 +46,11 @@ def create_task(store,request):
     video=Path(request['video']).resolve()
     if not video.is_file():
         raise ValueError('录播文件不存在。')
+    from media_audio import audio_track
+    selected_track=audio_track(request.get('audio_track',0))
+    media=probe(video,settings,store)
+    if media['audio_tracks'] and selected_track>=len(media['audio_tracks']):
+        raise ValueError('选择的音轨不存在，请重新选择录播音轨。')
     subtitle=request.get('subtitle') or ''
     chat=request.get('chat') or ''
     for path in (subtitle,chat):
@@ -53,7 +58,7 @@ def create_task(store,request):
             raise ValueError('字幕或弹幕文件不存在。')
     if not subtitle and not model_ready(store,settings):
         raise ValueError('内置转写模型不完整，请重新安装完整版，或导入已有 SRT/VTT 字幕。')
-    task={'id':str(uuid.uuid4()),'title':video.stem,'video':str(video),'subtitle':subtitle,'chat':chat,
+    task={'id':str(uuid.uuid4()),'title':video.stem,'video':str(video),'subtitle':subtitle,'chat':chat,'audio_track':selected_track,
           'created':now(),'status':'queued','stage':'等待处理','progress':0,'error':'',
           'duration':0,'thumbnail':'','clips':[],'exports':[],
           'prefs':prefs_checked(request.get('prefs',{}),settings),'output_root':settings['output_dir'],
@@ -64,6 +69,9 @@ def create_task(store,request):
 
 def model_dir(store,settings):
     if settings.get('asr_model_dir'):return Path(settings['asr_model_dir']).resolve()
+    if not getattr(sys,'frozen',False):
+        prepared=Path(__file__).resolve().parents[1]/'asr-model/SenseVoice'
+        if model_files_ready(prepared):return prepared
     bundled=(resource_dir() if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[1]/'src-tauri/resources/worker')/'models/sensevoice-int8'
     if model_files_ready(bundled):return bundled
     # Existing installations remain readable, but new installs use the bundled model.
@@ -209,6 +217,7 @@ class Runner:
         prefix=[sys.executable,'--asr'] if getattr(sys,'frozen',False) else [sys.executable,str(Path(__file__).with_name('asr.py'))]
         args=prefix+['--video',self.task['video'],'--model',str(model_dir(self.store,self.settings)),
                      '--output',str(output),'--ffmpeg',tool_path(self.settings,'ffmpeg'),
+                     '--ffprobe',tool_path(self.settings,'ffprobe'),'--audio-track',str(self.task.get('audio_track',0)),
                      '--threads',str(self.settings['asr_threads'])]
         started=time.monotonic()
         def report(line):
@@ -286,13 +295,18 @@ class Runner:
                         self.update('exporting',f'正在生成：{clip["title"]}',progress_base+fraction*progress_span)
                 except ValueError:
                     pass
-        scale="scale='min(1280,iw)':-2" if preview else 'scale=trunc(iw/2)*2:trunc(ih/2)*2'
+        scale="scale='max(2,trunc(min(1280,iw)/2)*2)':-2" if preview else "scale='max(2,trunc(iw/2)*2)':'max(2,trunc(ih/2)*2)'"
+        from media_audio import probe_audio,input_seek,audio_filter
+        media=probe_audio(self.task['video'],tool_path(self.settings,'ffprobe'))
+        seek=input_seek(media,clip['start'])
         args=[tool_path(self.settings,'ffmpeg'),'-hide_banner','-v','error','-nostdin','-y',
-              '-ss',str(clip['start']),'-i',self.task['video'],'-t',str(duration),
-              '-map','0:v:0','-map','0:a:0?','-c:v','libx264','-preset','veryfast',
+              '-ss',str(seek),'-i',self.task['video'],'-t',str(duration),
+              '-map','0:v:0','-map',f'0:a:{self.task.get("audio_track",0)}?','-c:v','libx264','-preset','veryfast',
               '-crf','25' if preview else '20','-threads','2','-filter_threads','1','-vf',scale,
               '-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-movflags','+faststart',
               '-avoid_negative_ts','make_zero','-progress','pipe:1',str(temporary)]
+        if media['audio_tracks']:
+            args[-1:-1]=['-af',audio_filter(media,48000,start=clip['start'],seek=seek,duration=duration)]
         try:
             command(args,self.store,self.task_id,on_line=None if preview else report)
             if not temporary.exists() or temporary.stat().st_size<1024:

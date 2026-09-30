@@ -1,0 +1,19 @@
+name: Fixed FFmpeg build
+description: Install Gyan FFmpeg 7.1.1 essentials from its versioned upstream release.
+runs:
+  using: composite
+  steps:
+    - shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $ffmpegRoot = Join-Path $env:RUNNER_TEMP ('sliceai-ffmpeg-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $ffmpegRoot | Out-Null
+        $ffmpegArchive = Join-Path $ffmpegRoot 'ffmpeg.zip'
+        Invoke-WebRequest -Uri 'https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip' -OutFile $ffmpegArchive
+        Expand-Archive -LiteralPath $ffmpegArchive -DestinationPath $ffmpegRoot
+        $ffmpegBin = Join-Path $ffmpegRoot 'ffmpeg-7.1.1-essentials_build/bin'
+        if (-not (Test-Path -LiteralPath (Join-Path $ffmpegBin 'ffmpeg.exe'))) { throw 'Missing pinned FFmpeg binary' }
+        Add-Content -LiteralPath $env:GITHUB_PATH -Value $ffmpegBin -Encoding utf8
+        & (Join-Path $ffmpegBin 'ffmpeg.exe') -version
+        & (Join-Path $ffmpegBin 'ffprobe.exe') -version
+        if ($LASTEXITCODE -ne 0) { throw 'FFprobe startup failed' }

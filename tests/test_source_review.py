@@ -15,6 +15,8 @@ from engine import Cancelled
 
 class SourceReviewTest(unittest.TestCase):
     def setUp(self):
+        timeline=patch('media_audio.probe_audio',return_value={'origin_shift':0})
+        timeline.start();self.addCleanup(timeline.stop)
         self.clip={'start':0,'end':100,'title':'测试','score':90,'id':1}
         self.rows=[{'id':0,'start':1,'end':6,'text':'他在说啥，为什么转变这么快啊？'},
                    {'id':1,'start':7,'end':9,'text':'一秒就看上了。'},
@@ -91,6 +93,8 @@ class SourceReviewTest(unittest.TestCase):
                     review_clip(runner,self.clip,changed);self.assertEqual(api.call_count,3)
                     Path(runner.task['video']).write_bytes(b'changed source')
                     review_clip(runner,self.clip,self.rows);self.assertEqual(api.call_count,4)
+                    runner.task['audio_track']=1
+                    review_clip(runner,self.clip,self.rows);self.assertEqual(api.call_count,5)
             finally:store.db.close()
 
     def test_failed_frame_is_not_sent_and_rejected_clip_gets_stable_id_on_recheck(self):

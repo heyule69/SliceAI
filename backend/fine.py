@@ -1,6 +1,7 @@
 """Versioned, source-referenced conversational editing. No executable AI output."""
 from __future__ import annotations
 import copy
+import contextlib
 import hashlib
 import json
 import math
@@ -73,8 +74,27 @@ def valid_ranges(raw,clip):
 def mapped_cues(sentences,ranges):
     result=[];offset=0
     for r in ranges:
-        result.extend(clip_cues(sentences,r['start'],r['end'],offset));offset+=r['end']-r['start']
-    return [dict(c,id=i+1) for i,c in enumerate(result)]
+        for row in sentences:
+            if row['end']<=r['start'] or row['start']>=r['end']:continue
+            cue={'start':max(0,row['start']-r['start'])+offset,
+                 'end':min(r['end'],row['end'])-r['start']+offset,'text':row['text']}
+            group=row.get('edit_group')
+            if (group is not None and result and result[-1].get('_group')==group
+                    and result[-1]['text']==cue['text'] and abs(result[-1]['end']-cue['start'])<=.002):
+                result[-1]['end']=cue['end']
+            else:result.append(dict(cue,_group=group))
+        offset+=r['end']-r['start']
+    return [dict(start=c['start'],end=c['end'],text=c['text'],id=i+1) for i,c in enumerate(result)]
+
+
+@contextlib.contextmanager
+def render_scratch(folder,count):
+    """Discard generated intermediates on success, failure or cancellation."""
+    try:yield
+    finally:
+        names=['render.partial.mp4','joined.mp4','edited-audio.wav','edited-audio.partial.wav']
+        names += [f'part-{i}{suffix}.mp4' for i in range(count) for suffix in ('','.partial')]
+        for name in names:(folder/name).unlink(missing_ok=True)
 
 
 def validate_cues(cues,duration):
@@ -151,22 +171,39 @@ class Editor:
 用户方向足够明确后给完整方案，不反复询问。默认原顺序删减，保留语义、语气、笑声和必要停顿。
 允许提议重排，但必须在回复中指出。不要裁画面、加转场或编造内容。字幕默认建议添加，降低背景音乐按用户选择应用，试听可选。
 只返回 JSON {"reply":"简短反馈或问题","plan":null}，有方案则 plan={"summary":"保留删除说明及重排说明","ranges":[{"start_id":1,"end_id":8,"reason":"保留原因"}],"subtitles":true}。
-保留区间按成片播放顺序排列，只能引用提供的真实句子id，禁止重复使用同一时间范围。'''
-        payload={'title':self.p['title'],'transcript':self.context,
-                 'current_plan':{k:v for k,v in self.current().items() if k not in ('cues','preview')} if self.p['current_version'] else None}
+保留区间按成片播放顺序排列，只能引用提供的真实句子id，禁止重复使用同一时间范围。最多24个区间，reply/summary各不超过500字，避免输出截断。'''
+        context=self.context;outline=None
+        if len(json.dumps(context,ensure_ascii=False))>5000:
+            from analysis_budget import grounded_outline
+            outline=grounded_outline(self.runner,context)
+            anchors={row['id'] for row in context[:2]+context[-2:]} | {row['id'] for row in outline['evidence']}
+            context=[dict(row,text=row['text'][:160]) for row in context if row['id'] in anchors]
+            system+='\nsource_outline是全事件的有原文依据概要；transcript仅提供可用边界anchors，未展示的原文仍在素材里，不能当作已删除。无法确定精细首尾时保留完整区间。'
+        current_plan=None
+        if self.p['current_version']:
+            current=self.current();ranges=current['ranges']
+            current_plan={key:current[key] for key in ('summary','subtitles','audio_strength')}
+            current_plan.update(ranges=ranges if len(ranges)<=20 else ranges[:10]+ranges[-10:],
+                                interval_count=len(ranges),ranges_truncated=len(ranges)>20)
+        payload={'title':self.p['title'],'transcript':context,'source_outline':outline,'current_plan':current_plan}
         messages=[{'role':'system','content':system},{'role':'user','content':json.dumps(payload,ensure_ascii=False)}]
-        messages+=self.p['messages'][-24:]
+        history=[];chars=0
+        for row in reversed(self.p['messages'][-24:]):
+            if chars+len(row['content'])>12000:break
+            history.append(row);chars+=len(row['content'])
+        messages+=list(reversed(history))
         if not self.p['messages']:messages.append({'role':'user','content':'请先理解这个片段，并询问我想怎样剪。'})
         raw=decode_json(chat_api(self.settings,messages,self.store,self.p['id'],self.usage))
         reply=raw.get('reply')
         if not isinstance(reply,str) or not reply.strip():raise ValueError('AI 没有返回有效反馈，请重试。')
         plan=raw.get('plan')
         if plan is not None:
-            if not isinstance(plan,dict) or not isinstance(plan.get('ranges'),list):raise ValueError('AI 方案结构无效。')
+            if not isinstance(plan,dict) or not isinstance(plan.get('ranges'),list) or len(plan['ranges'])>24:raise ValueError('AI 方案结构无效。')
             by_id={s['id']:s for s in self.context};ranges=[];used=set()
+            supplied={row['id'] for row in context}
             for r in plan['ranges']:
                 a,b=r.get('start_id'),r.get('end_id')
-                if type(a) is not int or type(b) is not int or a not in by_id or b not in by_id or a>b:raise ValueError('AI 方案引用了不存在的句子。')
+                if type(a) is not int or type(b) is not int or a not in supplied or b not in supplied or a>b:raise ValueError('AI 方案引用了不存在的句子。')
                 ids={sid for sid in by_id if a<=sid<=b}
                 if used&ids:raise ValueError('AI 方案重复使用了同一句话，请调整方案。')
                 used|=ids
@@ -183,14 +220,26 @@ class Editor:
         old=self.current();v=copy.deepcopy(old)
         v.update(id=str(uuid.uuid4()),number=len(self.p['versions'])+1,created=now(),preview='',render_key='')
         if 'ranges' in self.req:
+            from caption_timeline import review_regions,update_review,mark_partial_groups
+            warnings=review_regions(v)
             v['ranges']=valid_ranges(self.req['ranges'],self.clip)
             v['duration']=sum(r['end']-r['start'] for r in v['ranges'])
-            v['cues']=mapped_cues(v.get('transcript_rows',self.sentences),v['ranges']);v['confirmed']=False
-            v.pop('caption_review',None)
+            from caption_timeline import crosses_cut
+            rows=mark_partial_groups(v.get('subtitle_rows',v.get('transcript_rows',self.sentences)),v['ranges'])
+            v['cues']=mapped_cues(rows,v['ranges']);v['confirmed']=False
+            v['caption_boundary_pending']=crosses_cut(rows,v['ranges'])
+            update_review(v,warnings,v.get('caption_review',{}).get('method','range_adjusted'))
             if 'removed' in v:v['removed']=[d for d in v['removed'] if not any(max(d['start'],r['start'])<min(d['end'],r['end']) for r in v['ranges'])]
             v['reordered']=any(a['start']>b['start'] for a,b in zip(v['ranges'],v['ranges'][1:]))
             v['summary']='手动调整保留区间；请重新确认。'
-        if 'cues' in self.req:v['cues']=validate_cues(self.req['cues'],v['duration'])
+        if 'cues' in self.req:
+            from caption_timeline import source_rows,overlay_rows,review_regions,subtract,update_review
+            warnings=[piece for region in review_regions(v) for piece in subtract(region,v['ranges'])]
+            v['cues']=validate_cues(self.req['cues'],v['duration'])
+            rows=v.get('subtitle_rows',v.get('transcript_rows',self.sentences))
+            v['subtitle_rows']=overlay_rows(rows,source_rows(v['cues'],v['ranges']),v['ranges'])
+            v.pop('caption_boundary_pending',None)
+            update_review(v,warnings,'user_corrected')
         if 'subtitles' in self.req:v['subtitles']=self.req['subtitles'] is True
         if 'audio_strength' in self.req:
             strength=float(self.req['audio_strength'])
@@ -212,65 +261,76 @@ class Editor:
         from fine_audio import identity as audio_identity, prepare as prepare_audio, cut as cut_audio
         if v.get('analysis_audio') and v['analysis_audio']!=audio_identity(self,v['analysis_audio']['strength']):
             raise ValueError('原素材已变化，请重新自动细剪，避免沿用旧的音频分析。')
+        if v['subtitles']:
+            from caption_timeline import crosses_cut,refresh_boundaries,mark_partial_groups
+            rows=mark_partial_groups(v.get('subtitle_rows',v.get('transcript_rows',self.sentences)),v['ranges'])
+            if v.get('caption_boundary_pending') or crosses_cut(rows,v['ranges']):
+                refresh_boundaries(self,v)
         key=hashlib.sha256(json.dumps({'version':{k:v[k] for k in ('ranges','cues','subtitles','audio_strength')},
-              'renderer':4,'normalize_audio':v.get('normalize_audio',False),'audio_engine':v.get('audio_engine') if v['audio_strength'] else None,
+              'renderer':5,'audio_track':self.task.get('audio_track',0),'normalize_audio':v.get('normalize_audio',False),'audio_engine':v.get('audio_engine') if v['audio_strength'] else None,
               'video':str(source),'size':source.stat().st_size,'mtime':source.stat().st_mtime_ns,'export':export},sort_keys=True).encode()).hexdigest()
         folder=self.folder/'renders'/key;folder.mkdir(parents=True,exist_ok=True)
         final=folder/'render.mp4'
+        # A cached render is a media optimization, never permission to publish.
+        self.persist('检查素材与来源')
+        if self.task['prefs'].get('exclude_playback',True):
+            from source_review import review_clip
+            clip=next((c for c in self.task['clips'] if c['id']==self.p['clip_id']),None)
+            if not clip:raise ValueError('原事件已被来源复核过滤，暂不生成成片。')
+            result=review_clip(self.runner,clip,self.sentences)
+            if result['decision']!='keep':raise ValueError(result['reason'])
         if not final.is_file():
-            prepared=prepare_audio(self,v['audio_strength']) if v['audio_strength'] else None
-            self.persist('检查素材与来源')
-            # Export gate remains applicable to historical events and moved/replaced sources.
-            if self.task['prefs'].get('exclude_playback',True):
-                from source_review import review_clip
-                clip=next((c for c in self.task['clips'] if c['id']==self.p['clip_id']),None)
-                if not clip:raise ValueError('原事件已被来源复核过滤，暂不生成成片。')
-                result=review_clip(self.runner,clip,self.sentences)
-                if result['decision']!='keep':raise ValueError(result['reason'])
-            ffmpeg=tool_path(self.settings,'ffmpeg');parts=[]
-            info=probe(source,self.settings,self.store)
-            for i,r in enumerate(v['ranges']):
-                self.persist(f'生成预览区间 · {i+1}/{len(v["ranges"])}' if not export else f'导出区间 · {i+1}/{len(v["ranges"])}')
-                part=folder/f'part-{i}.mp4';temp=folder/f'part-{i}.partial.mp4'
-                if not part.is_file():
-                    args=[ffmpeg,'-hide_banner','-v','error','-nostdin','-y','-ss',str(r['start']),'-i',str(source)]
-                    if not info['audio']:args+=['-f','lavfi','-i','anullsrc=r=48000:cl=stereo']
-                    args+=['-t',str(r['end']-r['start']),'-map','0:v:0','-map','0:a:0' if info['audio'] else '1:a:0',
-                           '-vf',"scale='min(1280,iw)':-2" if not export else 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
-                           '-c:v','libx264','-preset','veryfast','-crf','18' if export else '23','-threads','2','-filter_threads','1',
-                           '-pix_fmt','yuv420p','-c:a','aac','-ar','48000','-ac','2','-b:a','192k',str(temp)]
-                    command(args,self.store,self.p['id']);temp.replace(part)
-                parts.append(part)
-            concat=folder/'parts.txt';concat.write_text(''.join(f"file '{p.name}'\nduration {r['end']-r['start']:.6f}\n" for p,r in zip(parts,v['ranges'])),encoding='utf-8')
-            self.persist('拼接视频区间')
-            joined=folder/'joined.mp4'
-            command([ffmpeg,'-v','error','-nostdin','-y','-f','concat','-safe','1','-i',str(concat),'-t',str(v['duration']),'-c','copy',str(joined)],self.store,self.p['id'])
-            audio=None
-            if prepared:
-                self.persist('按剪辑区间裁切已处理音频')
-                audio=cut_audio(self,prepared,v['ranges'],folder)
-            self.persist('合成画面与声音')
-            args=[ffmpeg,'-v','error','-nostdin','-y','-i',str(joined)]
-            if audio:args+=['-i',str(audio)]
-            args+=['-map','0:v:0','-map','1:a:0' if audio else '0:a:0']
-            if v['subtitles']:
-                srt=folder/'captions.srt';write_srt(srt,subtitle_lines(v['cues']))
-                escaped=str(srt.resolve()).replace('\\','/').replace(':','\\:').replace("'","\\'")
-                args+=['-vf',f"subtitles=filename='{escaped}':force_style='FontName=Microsoft YaHei,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H00202020,BorderStyle=1,Outline=1.5,Shadow=0,Alignment=2,MarginV=24'",
-                       '-c:v','libx264','-preset','veryfast','-crf','18' if export else '23','-threads','2','-filter_threads','1']
-            else:args+=['-c:v','copy']
-            temp=folder/'render.partial.mp4'
-            if v.get('normalize_audio'):args+=['-af','loudnorm=I=-16:TP=-1.5:LRA=11']
-            args+=['-t',str(v['duration']),'-c:a','aac' if audio or v.get('normalize_audio') else 'copy','-movflags','+faststart',str(temp)]
-            try:
-                command(args,self.store,self.p['id'])
-                self.persist('校验成片')
-                actual=probe(temp,self.settings,self.store)
-                if abs(actual['duration']-v['duration'])>.3:raise ValueError('成片时长校验失败，未发布成片。')
-                temp.replace(final)
-            finally:temp.unlink(missing_ok=True)
-            for part in parts:part.unlink(missing_ok=True)
-            joined.unlink(missing_ok=True)
+            with render_scratch(folder,len(v['ranges'])):
+                prepared=prepare_audio(self,v['audio_strength']) if v['audio_strength'] else None
+                ffmpeg=tool_path(self.settings,'ffmpeg');parts=[]
+                info=probe(source,self.settings,self.store)
+                from media_audio import probe_audio,input_seek,audio_filter
+                timeline=probe_audio(source,tool_path(self.settings,'ffprobe'))
+                for i,r in enumerate(v['ranges']):
+                    self.persist(f'生成预览区间 · {i+1}/{len(v["ranges"])}' if not export else f'导出区间 · {i+1}/{len(v["ranges"])}')
+                    part=folder/f'part-{i}.mp4';temp=folder/f'part-{i}.partial.mp4'
+                    if not part.is_file():
+                        seek=input_seek(timeline,r['start'])
+                        args=[ffmpeg,'-hide_banner','-v','error','-nostdin','-y','-ss',str(seek),'-i',str(source)]
+                        if not info['audio']:args+=['-f','lavfi','-i','anullsrc=r=48000:cl=stereo']
+                        args+=['-t',str(r['end']-r['start']),'-map','0:v:0','-map',f'0:a:{self.task.get("audio_track",0)}' if info['audio'] else '1:a:0',
+                               '-vf',"scale='max(2,trunc(min(1280,iw)/2)*2)':-2" if not export else "scale='max(2,trunc(iw/2)*2)':'max(2,trunc(ih/2)*2)'",
+                               '-c:v','libx264','-preset','veryfast','-crf','18' if export else '23','-threads','2','-filter_threads','1',
+                                '-pix_fmt','yuv420p','-c:a','aac','-ar','48000','-ac','2','-b:a','192k',str(temp)]
+                        if info['audio']:
+                            args[-1:-1]=['-af',audio_filter(timeline,48000,start=r['start'],seek=seek,duration=r['end']-r['start'])]
+                        command(args,self.store,self.p['id']);temp.replace(part)
+                    parts.append(part)
+                concat=folder/'parts.txt';concat.write_text(''.join(f"file '{p.name}'\nduration {r['end']-r['start']:.6f}\n" for p,r in zip(parts,v['ranges'])),encoding='utf-8')
+                self.persist('拼接视频区间')
+                joined=folder/'joined.mp4'
+                command([ffmpeg,'-v','error','-nostdin','-y','-f','concat','-safe','1','-i',str(concat),'-t',str(v['duration']),'-c','copy',str(joined)],self.store,self.p['id'])
+                audio=None
+                if prepared:
+                    self.persist('按剪辑区间裁切已处理音频')
+                    audio=cut_audio(self,prepared,v['ranges'],folder)
+                self.persist('合成画面与声音')
+                args=[ffmpeg,'-v','error','-nostdin','-y','-i',str(joined)]
+                if audio:args+=['-i',str(audio)]
+                args+=['-map','0:v:0','-map','1:a:0' if audio else '0:a:0']
+                if v['subtitles']:
+                    srt=folder/'captions.srt';write_srt(srt,subtitle_lines(v['cues']))
+                    args+=['-vf',"subtitles=filename=captions.srt:force_style='FontName=Microsoft YaHei,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H00202020,BorderStyle=1,Outline=1.5,Shadow=0,Alignment=2,MarginV=24'",
+                           '-c:v','libx264','-preset','veryfast','-crf','18' if export else '23','-threads','2','-filter_threads','1']
+                else:args+=['-c:v','copy']
+                temp=folder/'render.partial.mp4'
+                if v.get('normalize_audio'):args+=['-af','loudnorm=I=-16:TP=-1.5:LRA=11']
+                args+=['-t',str(v['duration']),'-c:a','aac' if audio or v.get('normalize_audio') else 'copy','-movflags','+faststart',str(temp)]
+                try:
+                    command(args,self.store,self.p['id'],cwd=folder)
+                    self.persist('校验成片')
+                    actual=probe(temp,self.settings,self.store)
+                    if abs(actual['duration']-v['duration'])>.3:raise ValueError('成片时长校验失败，未发布成片。')
+                    temp.replace(final)
+                finally:temp.unlink(missing_ok=True)
+                for part in parts:part.unlink(missing_ok=True)
+                joined.unlink(missing_ok=True)
+                if audio:audio.unlink(missing_ok=True)
         if export:
             self.persist('写入导出文件')
             out=self.runner.output_folder()/'细剪';out.mkdir(exist_ok=True)

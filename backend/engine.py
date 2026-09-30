@@ -38,11 +38,11 @@ def kill_tree(proc):
     except subprocess.TimeoutExpired:
         proc.kill()
 
-def command(args, store, task_id=None, on_line=None, timeout=None):
+def command(args, store, task_id=None, on_line=None, timeout=None, cwd=None):
     """Drain output concurrently; cancellation terminates FFmpeg/ASR descendants too."""
     check_cancel(store,task_id)
     proc=subprocess.Popen([str(a) for a in args],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
-                          stdin=subprocess.DEVNULL,creationflags=CREATE_FLAGS,
+                          stdin=subprocess.DEVNULL,creationflags=CREATE_FLAGS,cwd=cwd,
                           env={**os.environ,'PYTHONIOENCODING':'utf-8','PYTHONUTF8':'1'})
     lines=queue.Queue(maxsize=200)
     def reader():
@@ -103,7 +103,7 @@ def probe(path,settings,store):
     if not path.is_file():
         raise ValueError('录播文件不存在，可能已被移动或删除。')
     exe=tool_path(settings,'ffprobe')
-    proc=subprocess.run([exe,'-v','error','-show_entries','format=duration:stream=codec_type,width,height,duration','-of','json',str(path)],
+    proc=subprocess.run([exe,'-v','error','-show_entries','format=duration,start_time,format_name:stream=codec_type,width,height,duration,channels,start_time:stream_tags=title,language,DURATION:stream_disposition=default','-of','json',str(path)],
                         capture_output=True,creationflags=CREATE_FLAGS,timeout=45)
     if proc.returncode:
         raise ValueError('无法读取录播，请检查格式和文件是否完整。')
@@ -111,12 +111,17 @@ def probe(path,settings,store):
     video=next((s for s in info.get('streams',[]) if s.get('codec_type')=='video'),None)
     if not video:
         raise ValueError('选择的文件没有视频轨道。')
-    duration=float(info.get('format',{}).get('duration',video.get('duration',0)))
+    from media_audio import video_duration
+    duration=video_duration(info)
     if not math.isfinite(duration) or duration<=0:
         raise ValueError('无法确定录播时长，请先修复录播时间戳。')
+    audio_tracks=[{'index':i,'title':stream.get('tags',{}).get('title',''),
+                   'language':stream.get('tags',{}).get('language',''),'channels':stream.get('channels',0),
+                   'default':bool(stream.get('disposition',{}).get('default'))}
+                  for i,stream in enumerate(s for s in info.get('streams',[]) if s.get('codec_type')=='audio')]
     return {'path':str(path),'name':path.stem,'duration':duration,'width':video.get('width',0),
             'height':video.get('height',0),'size':path.stat().st_size,
-            'audio':any(s.get('codec_type')=='audio' for s in info.get('streams',[]))}
+            'audio':bool(audio_tracks),'audio_tracks':audio_tracks}
 
 def chat_api(settings,messages,store,task_id=None,on_usage=None):
     if not settings.get('api_key'):
@@ -195,6 +200,8 @@ def decode_json(content):
 def thumbnail(source,output,at,settings,store,task_id=None):
     output=Path(output)
     output.parent.mkdir(parents=True,exist_ok=True)
-    command([tool_path(settings,'ffmpeg'),'-hide_banner','-v','error','-nostdin','-y','-ss',str(max(0,at)),
+    from media_audio import probe_audio,input_seek
+    media=probe_audio(source,tool_path(settings,'ffprobe'))
+    command([tool_path(settings,'ffmpeg'),'-hide_banner','-v','error','-nostdin','-y','-ss',str(input_seek(media,max(0,at))),
              '-i',source,'-frames:v','1','-vf','scale=480:-2','-threads','1',str(output)],store,task_id,timeout=60)
     return str(output)

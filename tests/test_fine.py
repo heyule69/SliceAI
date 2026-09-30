@@ -134,9 +134,15 @@ class EventTest(unittest.TestCase):
             task={'duration':2200,'prefs':{'topics':['自动判断']}}
             task_id='test';store=None
             def update(self,*args):pass
+        calls=[]
         def api(runner,kind,system,payload):
-            if kind=='boundary':return payload['event']
-            if kind=='continuity':return {'events':[payload['event']]}
+            calls.append(kind)
+            if kind=='boundary-v2':
+                self.assertLessEqual(len(json.dumps(payload,ensure_ascii=False)),6000)
+                return payload['event']
+            if kind=='continuity-full-v2':
+                self.assertLessEqual(len(json.dumps(payload,ensure_ascii=False)),6000)
+                return {'events':[{**payload['event'],'title':'完整跨窗口故事','reason':'同一故事的缘由、过程与结尾'}],'more_events':False}
             window=payload['transcript'];pending=payload['open_events']
             result=[]
             if window[0]['id']==0:result=[{'key':None,'start_id':0,'end_id':window[-1]['id'],'ended':False,'score':95}]
@@ -148,6 +154,7 @@ class EventTest(unittest.TestCase):
         with patch('events.cached_api',side_effect=api),patch('events.check_cancel'):
             result=analyze_events(Runner(),rows,[])
         self.assertGreater(len(result),12)
+        self.assertIn('continuity-full-v2',calls);self.assertIn('boundary-v2',calls)
         story=next(e for e in result if e['start_id']==0)
         self.assertEqual(story['end_id'],65);self.assertGreater(story['end']-story['start'],1200)
 

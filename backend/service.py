@@ -33,6 +33,29 @@ def state(store):
     return {'settings':settings,'tasks':store.tasks(),'edits':edits,'data_dir':str(store.root),
             'model':{'ready':model_ready(store,settings),'path':str(model_dir(store,settings))},'tools':tools}
 
+
+def recover_failure(store, request):
+    """Repair persisted state when a worker dies before its Python cleanup runs."""
+    from engine import emit
+    from pipeline import ACTIVE
+    import fine
+    message = str(request.get('message') or '处理引擎意外退出，已保留结果，可重试。')[:2000]
+    if request.get('project_id'):
+        project = fine.get(store, request['project_id'])
+        if project['status'] in ('busy', 'queued'):
+            if project.get('execution',{}).get('state')!='running':
+                fine.fine_progress.begin(project,str(request.get('original_cmd') or 'edit_auto'))
+            project.update(status='idle', stage='处理已中断，可重试', error=message)
+            fine.fine_progress.finish(project, 'failed')
+            fine.save(store, project)
+    elif request.get('task_id'):
+        task = store.get(request['task_id'])
+        if task['status'] in ACTIVE:
+            task.update(status='interrupted', stage='处理引擎已中断，可重试或导出已有片段', error=message)
+            store.put(task)
+            emit({'type': 'task', 'task': task})
+    return state(store)
+
 def dispatch(request):
     from storage import Store
     from engine import Cancelled,chat_api,emit,probe,thumbnail
@@ -90,6 +113,7 @@ def dispatch(request):
                     task['status']='interrupted';task['stage']='上次运行被中断，可以重试或导出已有片段';store.put(task)
             return state(store)
         if cmd=='state':return state(store)
+        if cmd=='recover_failure':return recover_failure(store,request)
         if cmd=='save_settings':return store.save_settings(request['values'])
         if cmd=='probe':
             settings=store.settings();result=probe(request['path'],settings,store)
@@ -103,7 +127,8 @@ def dispatch(request):
             return delete_task(store,request['task_id'],request.get('delete_files',False))
         if cmd=='retry_task':
             task=store.get(request['task_id'])
-            return create_task(store,{'video':task['video'],'subtitle':task['subtitle'],'chat':task['chat'],'prefs':task['prefs']})
+            return create_task(store,{'video':task['video'],'subtitle':task['subtitle'],'chat':task['chat'],'prefs':task['prefs'],
+                                      'audio_track':task.get('audio_track',0)})
         if cmd=='cancel_task':
             task=store.get(request['task_id'])
             (store.task_dir(task['id'])/'cancel').write_text('cancel',encoding='utf-8')

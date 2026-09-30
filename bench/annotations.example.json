@@ -1,0 +1,6 @@
+{
+  "example_fixture": true,
+  "events": [{"id": "story", "start": 10, "end": 30}],
+  "protected": [{"id": "reaction", "start": 20, "end": 23}],
+  "captions": [{"id": 1, "start": 0, "end": 3, "text": "人工对齐的成片字幕示例"}]
+}

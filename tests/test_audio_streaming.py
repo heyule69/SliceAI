@@ -1,6 +1,8 @@
 """Run in .audio-venv: bounded buffering must preserve samples and edge padding."""
 import sys,tempfile,unittest
 from pathlib import Path
+from unittest.mock import patch
+from types import SimpleNamespace
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'backend'))
 try:
     import numpy as np
@@ -10,10 +12,43 @@ try:
     AUDIO_AVAILABLE=True
 except ImportError:
     AUDIO_AVAILABLE=False
-from bandit_worker import resample_file,stream_separate
+from bandit_worker import main,mix_files,resample_file,save_stem,stream_separate
 
 @unittest.skipUnless(AUDIO_AVAILABLE,'Audio runtime is isolated in .audio-venv')
 class StreamingTest(unittest.TestCase):
+    def test_strength_updates_reuse_stem_without_loading_model_and_preserve_mix(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder=Path(temp);source=folder/'raw.wav';stem=folder/'speech.wav'
+            raw=np.random.default_rng(4).normal(0,.1,48000+37).astype('float32')
+            sf.write(source,raw,48000,subtype='FLOAT')
+            loaded=[]
+            def model(x):return x[:,None]*.6
+            def load_model(folder):loaded.append(folder);return model
+            resources=SimpleNamespace(initial_threads=2,start=lambda:None,close=lambda:None,boundary=lambda setter:None)
+            for number,strength in enumerate((1,.5)):
+                target=folder/f'mixed-{number}.wav'
+                args=['worker','--input',str(source),'--output',str(target),'--model',str(folder/'model'),
+                      '--speech-cache',str(stem),'--strength',str(strength)]
+                with patch('sys.argv',args),patch('bandit_worker.load_model',side_effect=load_model),\
+                     patch('audio_resources.AdaptiveResources',return_value=resources),patch('torch.set_num_interop_threads'):
+                    main()
+                speech,_=sf.read(stem,dtype='float32');actual,_=sf.read(target,dtype='float32')
+                np.testing.assert_array_equal(actual,raw*(1-strength)+speech*strength)
+            self.assertEqual(len(loaded),1)
+            self.assertFalse(list(folder.glob('*.partial.wav')))
+
+    def test_mix_cancellation_keeps_immutable_speech_and_original_samples(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder=Path(temp);source=folder/'raw.wav';stem=folder/'speech.wav';mixed=folder/'mix.partial.wav'
+            raw=np.random.default_rng(2).normal(0,.1,1001).astype('float32')
+            speech=raw*.6
+            sf.write(source,raw,48000,subtype='FLOAT');sf.write(stem,speech,48000,subtype='FLOAT')
+            def cancelled():raise RuntimeError('cancelled')
+            with self.assertRaisesRegex(RuntimeError,'cancelled'):
+                mix_files(source,stem,mixed,.5,cancelled)
+            original,_=sf.read(source,dtype='float32');cached,_=sf.read(stem,dtype='float32')
+            np.testing.assert_array_equal(original,raw);np.testing.assert_array_equal(cached,speech)
+
     def test_thread_adjustments_at_block_boundaries_preserve_output(self):
         with tempfile.TemporaryDirectory() as temp:
             source,target=Path(temp)/'raw.wav',Path(temp)/'out.wav'

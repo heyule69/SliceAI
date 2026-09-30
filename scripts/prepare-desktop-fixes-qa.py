@@ -1,5 +1,6 @@
 from pathlib import Path
 root=Path(__file__).resolve().parents[1];folder=root/'.test-artifacts'
+folder.mkdir(parents=True,exist_ok=True)
 html=(root/'index.html').read_text(encoding='utf-8').replace('/src/main.ts','/.test-artifacts/desktop-fixes-qa.js')
 (folder/'desktop-fixes-qa.html').write_text(html,encoding='utf-8')
 (folder/'desktop-fixes-qa.js').write_text('''

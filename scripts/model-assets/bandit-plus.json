@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "destination": "audio-model/BandItPlus",
+  "files": {
+    "bandit-plus.chpt": {
+      "bytes": 148891175,
+      "sha256": "c48284779f7d1258a6527d3aaa18a532d45c1f506e2dcc25d5ab179a8c5e2573",
+      "source": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases/download/v.1.0.3/model_bandit_plus_dnr_sdr_11.47.chpt"
+    },
+    "config.json": {
+      "bytes": 734,
+      "sha256": "f21ebbb97a712b944d3c885c8b5cdafb6cbf9d3213ad2cc6eebc9a2d5f2b4678",
+      "builtin": "bandit-plus-config.json",
+      "newline": "crlf"
+    }
+  },
+  "manifest": {
+    "engine": "bandit-plus-dnr-11.47-speech-v1",
+    "model": "BandIt Plus",
+    "file": "bandit-plus.chpt",
+    "sha256": "c48284779f7d1258a6527d3aaa18a532d45c1f506e2dcc25d5ab179a8c5e2573",
+    "config": "config.json",
+    "config_sha256": "f21ebbb97a712b944d3c885c8b5cdafb6cbf9d3213ad2cc6eebc9a2d5f2b4678",
+    "source": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases/download/v.1.0.3/model_bandit_plus_dnr_sdr_11.47.chpt",
+    "sample_rate": 44100,
+    "chunk_seconds": 6,
+    "overlap": 0.75,
+    "stem": "speech",
+    "precision": "float32",
+    "threads": 4
+  }
+}

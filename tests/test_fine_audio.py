@@ -158,12 +158,12 @@ class AudioFirstTest(unittest.TestCase):
         with patch('fine_audio.process_audio',side_effect=Cancelled),contextlib.redirect_stdout(io.StringIO()):
             result=Editor(self.store,{'cmd':'edit_auto','project_id':self.p['id'],'options':self.options()}).run()
         self.assertEqual(result['execution']['state'],'cancelled');self.assertEqual(result['versions'],[])
-        self.assertFalse(list(editor.folder.rglob('ready.json')))
+        self.assertFalse(list(editor.folder.rglob('ready-*.json')))
         editor=Editor(self.store,{'project_id':self.p['id']})
         with patch('fine_audio.process_audio',return_value=self.video),\
                 patch('fine_audio.audio_duration',return_value=2),contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaisesRegex(ValueError,'时长'):prepare(editor)
-        self.assertFalse(list(editor.folder.rglob('ready.json')))
+        self.assertFalse(list(editor.folder.rglob('ready-*.json')))
 
     def test_processed_transcription_uses_zero_seek_and_preserves_source_timestamps(self):
         self.p.update(source_start=3,source_end=10)
@@ -180,10 +180,11 @@ class AudioFirstTest(unittest.TestCase):
                 patch('fine_auto.command',side_effect=command):
             rows=checked_captions(editor,audio)
             self.assertEqual((rows[0]['start'],rows[0]['end']),(4,6))
-            self.assertEqual(calls[0][calls[0].index('-ss')+1],'0')
+            self.assertEqual(float(calls[0][calls[0].index('-ss')+1]),0)
+            self.assertEqual(calls[0][calls[0].index('-map')+1],'0:a:0')
             self.assertEqual(checked_captions(editor,audio),rows);self.assertEqual(len(calls),2)
             self.assertEqual(checked_captions(editor),rows);self.assertEqual(len(calls),4)
-            self.assertEqual(calls[2][calls[2].index('-ss')+1],'3')
+            self.assertEqual(float(calls[2][calls[2].index('-ss')+1]),3)
 
 
 if __name__=='__main__':unittest.main()

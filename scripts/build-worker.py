@@ -1,19 +1,16 @@
 """Build a self-contained, on-demand worker without a resident Python server."""
-import os
-import hashlib
-import json
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+from model_assets import CATALOG, read_json, verify
 
 ROOT=Path(__file__).resolve().parents[1]
 def main():
     model=ROOT/'asr-model/SenseVoice'
-    manifest=json.loads((model/'manifest.json').read_text(encoding='utf-8'))
-    for name,info in manifest['files'].items():
-        with (model/name).open('rb') as stream:actual=hashlib.file_digest(stream,'sha256').hexdigest()
-        if actual!=info['sha256']:raise SystemExit(f'ASR asset checksum mismatch: {name}')
+    verify(read_json(CATALOG/'sensevoice.json'), model)
+    for name in ('ffmpeg','ffprobe'):
+        if not shutil.which(name):raise SystemExit(f'{name} must be available in PATH before packaging.')
     subprocess.run([sys.executable,'-m','PyInstaller','--noconfirm','--clean','--onedir',
         '--name','sliceai-worker','--distpath',str(ROOT/'build/worker-dist'),
         '--workpath',str(ROOT/'build/pyinstaller'),'--specpath',str(ROOT/'build'),

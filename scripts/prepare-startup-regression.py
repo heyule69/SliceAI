@@ -1,6 +1,7 @@
 """Browser-only integration fixture for the real start button, without API calls."""
 from pathlib import Path
 root=Path(__file__).resolve().parents[1]
+(root/'.test-artifacts').mkdir(parents=True,exist_ok=True)
 html=(root/'index.html').read_text(encoding='utf-8').replace('/src/main.ts','/.test-artifacts/startup-regression.js')
 (root/'.test-artifacts/startup-regression.html').write_text(html,encoding='utf-8')
 (root/'.test-artifacts/startup-regression.js').write_text('''

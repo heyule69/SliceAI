@@ -1,0 +1,6 @@
+{
+  "example_fixture": true,
+  "clips": [{"start": 10, "end": 30}],
+  "ranges": [{"start": 10, "end": 30}],
+  "captions": [{"id": 1, "start": 0.1, "end": 3.1, "text": "人工对齐的成片字幕示例"}]
+}

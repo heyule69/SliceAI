@@ -1,7 +1,10 @@
 """Bundle an offline CPU audio worker, isolated from ASR dependencies."""
-import json,shutil,subprocess,sys,uuid
+import shutil,subprocess,sys,uuid
 from pathlib import Path
+from model_assets import CATALOG, read_json, verify
 root=Path(__file__).resolve().parents[1]
+model=root/'audio-model/BandItPlus'
+manifest=verify(read_json(CATALOG/'bandit-plus.json'),model)
 args=[sys.executable,'-m','PyInstaller','--noconfirm','--clean','--onedir','--name','sliceai-audio',
       '--distpath',str(root/'build/audio-dist'),'--workpath',str(root/'build/audio-pyinstaller'),
       '--specpath',str(root/'build')]
@@ -23,8 +26,7 @@ if destination.exists():
                 if not path.resolve().is_relative_to(destination.resolve()):raise ValueError('Unsafe bundle file')
                 path.unlink()
 shutil.copytree(root/'build/audio-dist/sliceai-audio',destination,dirs_exist_ok=True)
-model=root/'audio-model/BandItPlus';target=destination/'model';target.mkdir(exist_ok=True)
-manifest=json.loads((model/'manifest.json').read_text(encoding='utf-8'))
+target=destination/'model';target.mkdir(exist_ok=True)
 for name in ('manifest.json',manifest['config'],manifest['file']):
     if (model/name).is_file():shutil.copy2(model/name,target/name)
 (destination/'THIRD-PARTY-NOTICES.txt').write_text(

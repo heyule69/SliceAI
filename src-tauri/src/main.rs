@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use serde_json::{json, Value};
-use std::{fs, io::{BufRead, BufReader, Write}, path::PathBuf, process::{Command, Stdio}, sync::{mpsc, Arc, Mutex}};
+use std::{fs, io::{BufRead, BufReader, Write}, path::PathBuf, process::{Command, Stdio}, sync::{mpsc, Arc, Mutex, atomic::{AtomicU64, Ordering}}};
 use tauri::{Emitter, Manager};
 
 #[cfg(windows)]
@@ -11,10 +11,74 @@ struct Runtime {
     worker: PathBuf,
     work_lock: Mutex<()>,
     script: Option<PathBuf>,
-    sender: mpsc::Sender<Value>,
+    sender: mpsc::Sender<(u64, Value)>,
+    queue: Mutex<Vec<Value>>,
+    queue_revision: AtomicU64,
+    next_job: AtomicU64,
     window_size: Mutex<(f64, f64)>,
     #[cfg(windows)]
     job: usize,
+}
+
+// Communication errors must also stop the owned child before persisted state is
+// recovered; otherwise it could keep writing progress after being marked stopped.
+struct WorkerProcess(std::process::Child);
+impl std::ops::Deref for WorkerProcess {
+    type Target = std::process::Child;
+    fn deref(&self) -> &Self::Target { &self.0 }
+}
+impl std::ops::DerefMut for WorkerProcess {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+}
+impl Drop for WorkerProcess {
+    fn drop(&mut self) { let _ = self.0.kill(); let _ = self.0.wait(); }
+}
+
+fn queue_snapshot(runtime: &Runtime) -> Result<Value, String> {
+    let queue = runtime.queue.lock().map_err(|_| "后台队列状态异常，请重新打开程序。")?;
+    let mut position = 0;
+    let entries: Vec<Value> = queue.iter().map(|entry| {
+        let mut entry = entry.clone();
+        if entry["status"] == "queued" { position += 1; entry["position"] = json!(position); }
+        else { entry["position"] = json!(0); }
+        entry
+    }).collect();
+    Ok(json!({"type":"queue","queue":entries,"queue_revision":runtime.queue_revision.load(Ordering::Relaxed)}))
+}
+
+fn emit_queue(app: &tauri::AppHandle, runtime: &Runtime) {
+    if let Ok(snapshot) = queue_snapshot(runtime) { let _ = app.emit("worker-event", snapshot); }
+}
+
+#[tauri::command]
+fn queue_state(runtime: tauri::State<'_, Arc<Runtime>>) -> Result<Value, String> {
+    queue_snapshot(&runtime)
+}
+
+fn queue_job(app: &tauri::AppHandle, runtime: &Runtime, request: Value) -> Result<(), String> {
+    let id = runtime.next_job.fetch_add(1, Ordering::Relaxed);
+    {
+        let mut queue = runtime.queue.lock().map_err(|_| "后台队列状态异常，请重新打开程序。")?;
+        queue.push(json!({"id":id,"cmd":request["cmd"],"task_id":request["task_id"],"project_id":request["project_id"],"status":"queued"}));
+        runtime.queue_revision.fetch_add(1, Ordering::Relaxed);
+    }
+    emit_queue(app, runtime);
+    if runtime.sender.send((id, request)).is_err() {
+        if let Ok(mut queue) = runtime.queue.lock() { queue.retain(|entry| entry["id"] != id); runtime.queue_revision.fetch_add(1, Ordering::Relaxed); }
+        emit_queue(app, runtime);
+        return Err("后台队列不可用，请重新打开程序。".into());
+    }
+    Ok(())
+}
+
+fn change_queue(app: &tauri::AppHandle, runtime: &Runtime, id: u64, running: bool) {
+    if let Ok(mut queue) = runtime.queue.lock() {
+        if running {
+            if let Some(entry) = queue.iter_mut().find(|entry| entry["id"] == id) { entry["status"] = json!("running"); }
+        } else { queue.retain(|entry| entry["id"] != id); }
+        runtime.queue_revision.fetch_add(1, Ordering::Relaxed);
+    }
+    emit_queue(app, runtime);
 }
 
 fn grant_assets(app: &tauri::AppHandle, value: &Value) {
@@ -43,7 +107,7 @@ fn worker_call(app: &tauri::AppHandle, runtime: &Runtime, mut request: Value) ->
     command.env("PYTHONUTF8", "1").env("PYTHONIOENCODING", "utf-8");
     #[cfg(windows)]
     command.creation_flags(0x08000000);
-    let mut child = command.spawn().map_err(|e| format!("无法启动处理引擎：{e}"))?;
+    let mut child = WorkerProcess(command.spawn().map_err(|e| format!("无法启动处理引擎：{e}"))?);
     #[cfg(windows)]
     unsafe {
         if windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(runtime.job as _, child.as_raw_handle() as _) == 0 {
@@ -85,10 +149,10 @@ async fn call(app: tauri::AppHandle, runtime: tauri::State<'_, Arc<Runtime>>, re
 }
 
 #[tauri::command]
-fn enqueue(runtime: tauri::State<'_, Arc<Runtime>>, request: Value) -> Result<(), String> {
+fn enqueue(app: tauri::AppHandle, runtime: tauri::State<'_, Arc<Runtime>>, request: Value) -> Result<(), String> {
     let cmd = request["cmd"].as_str().unwrap_or("");
     if !["run", "export", "recheck", "install_model", "edit_chat", "edit_auto", "edit_update", "edit_restore", "edit_confirm", "edit_preview", "edit_export", "edit_audio_sample", "edit_source_preview"].contains(&cmd) { return Err("不支持的后台任务".into()); }
-    runtime.sender.send(request).map_err(|_| "后台队列不可用，请重新打开程序。".into())
+    queue_job(&app, &runtime, request)
 }
 
 #[tauri::command]
@@ -154,12 +218,12 @@ fn main() {
                 window.center()?;
                 window.show()?;
             }
-            let (sender, receiver) = mpsc::channel::<Value>();
+            let (sender, receiver) = mpsc::channel::<(u64, Value)>();
             let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
             let (worker, script) = if cfg!(debug_assertions) {
                 (root.join(".venv/Scripts/python.exe"), Some(root.join("backend/service.py")))
             } else { (app.path().resource_dir()?.join("worker/sliceai-worker.exe"), None) };
-            let runtime = Arc::new(Runtime { data, worker, script, sender, work_lock: Mutex::new(()), window_size: Mutex::new(window_size),
+            let runtime = Arc::new(Runtime { data, worker, script, sender, queue: Mutex::new(Vec::new()), queue_revision: AtomicU64::new(0), next_job: AtomicU64::new(1), work_lock: Mutex::new(()), window_size: Mutex::new(window_size),
                 #[cfg(windows)] job: create_job().map_err(std::io::Error::other)?,
             });
             app.manage(runtime.clone());
@@ -169,18 +233,28 @@ fn main() {
                     Ok(initial) => {
                         if let Some(tasks) = initial["tasks"].as_array() {
                             for task in tasks { if task["status"] == "queued" {
-                                let _ = runtime.sender.send(json!({"cmd":"run","task_id":task["id"]}));
+                                let _ = queue_job(&handle, &runtime, json!({"cmd":"run","task_id":task["id"]}));
                             }}
                         }
                         let _ = handle.emit("backend-ready", initial);
                     },
                     Err(error) => { let _ = handle.emit("worker-event", json!({"type":"error","message":error})); }
                 }
-                for request in receiver {
+                for (id, request) in receiver {
+                    change_queue(&handle, &runtime, id, true);
                     match worker_call(&handle, &runtime, request.clone()) {
                         Ok(result) => { let _ = handle.emit("worker-event", json!({"type":"finished","cmd":request["cmd"],"task_id":request["task_id"],"project_id":request["project_id"],"result":result})); }
-                        Err(error) => { let _ = handle.emit("worker-event", json!({"type":"error","cmd":request["cmd"],"task_id":request["task_id"],"project_id":request["project_id"],"message":error})); }
+                        Err(error) => {
+                            // Recover only the failed operation. Bootstrap would interrupt unrelated jobs.
+                            let recovery = worker_call(&handle, &runtime, json!({"cmd":"recover_failure","original_cmd":request["cmd"],"task_id":request["task_id"],"project_id":request["project_id"],"message":error}));
+                            let (state, message) = match recovery {
+                                Ok(state) => (state, error),
+                                Err(recovery_error) => (Value::Null, format!("{error} 状态恢复失败，请重新打开程序：{recovery_error}")),
+                            };
+                            let _ = handle.emit("worker-event", json!({"type":"error","cmd":request["cmd"],"task_id":request["task_id"],"project_id":request["project_id"],"message":message,"state":state}));
+                        }
                     }
+                    change_queue(&handle, &runtime, id, false);
                 }
             });
             Ok(())
@@ -197,7 +271,7 @@ fn main() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![call, enqueue, reveal])
+        .invoke_handler(tauri::generate_handler![call, enqueue, queue_state, reveal])
         .build(tauri::generate_context!())
         .expect("SliceAI 无法启动")
         .run(|app, event| {

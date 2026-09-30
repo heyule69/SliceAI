@@ -11,6 +11,7 @@ def run_asr(args):
     import numpy as np
     import sherpa_onnx
     from engine import CREATE_FLAGS, kill_tree
+    from media_audio import aligned_audio_args
     model=Path(args.model)
     recognizer=sherpa_onnx.OfflineRecognizer.from_sense_voice(
         model=str(model/'model.int8.onnx'),tokens=str(model/'tokens.txt'),
@@ -27,8 +28,9 @@ def run_asr(args):
     count=0;consumed=0;last_report=0
     log=Path(args.output).with_suffix('.ffmpeg.log')
     with log.open('wb') as error,Path(args.output).open('w',encoding='utf-8',newline='\n') as out:
-        proc=subprocess.Popen([args.ffmpeg,'-hide_banner','-v','error','-nostdin','-i',args.video,
-                               '-map','0:a:0','-vn','-ac','1','-ar','16000','-f','s16le','pipe:1'],
+        decode=aligned_audio_args(args.ffmpeg,args.video,'pipe:1',track=args.audio_track,
+                                  rate=16000,ffprobe=args.ffprobe,pcm='pcm_s16le')
+        proc=subprocess.Popen(decode,
                               stdout=subprocess.PIPE,stderr=error,stdin=subprocess.DEVNULL,creationflags=CREATE_FLAGS)
         def drain():
             nonlocal count
@@ -74,6 +76,8 @@ def main():
     parser.add_argument('--video',required=True);parser.add_argument('--model',required=True)
     parser.add_argument('--output',required=True);parser.add_argument('--ffmpeg',required=True)
     parser.add_argument('--threads',type=int,default=2)
+    parser.add_argument('--audio-track',type=int,default=0)
+    parser.add_argument('--ffprobe')
     run_asr(parser.parse_args())
 
 if __name__=='__main__':

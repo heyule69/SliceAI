@@ -30,7 +30,15 @@ def playback(runner, clip):
     ready = existing(location(runner, clip))
     if ready:
         return ready
-    return {'path': str(source), 'start': clip['start'], 'end': clip['end'], 'kind': 'source'}
+    from engine import probe,tool_path
+    from media_audio import probe_audio
+    media=probe(source,runner.settings,runner.store)
+    timeline=probe_audio(source,tool_path(runner.settings,'ffprobe'))
+    default=next((track['index'] for track in media['audio_tracks'] if track['default']),0)
+    selected=runner.task.get('audio_track',0)
+    compatible=selected!=default or abs(timeline['video_start'])>.001 or abs(timeline['origin_shift'])>.001
+    return {'path': str(source), 'start': clip['start'], 'end': clip['end'], 'kind': 'source',
+            'audio_track':selected,'compatible_required':compatible}
 
 
 def location(runner, clip):
@@ -39,7 +47,7 @@ def location(runner, clip):
         raise ValueError('原录播已移动，请重新定位素材。')
     stat = source.stat()
     key = hashlib.sha256(json.dumps([str(source.resolve()), stat.st_size,
-        stat.st_mtime_ns, clip['start'], clip['end'], 1]).encode('utf-8')).hexdigest()[:24]
+        stat.st_mtime_ns, clip['start'], clip['end'], runner.task.get('audio_track',0), 2]).encode('utf-8')).hexdigest()[:24]
     return runner.folder / 'previews' / f'event-{key}.mp4'
 
 

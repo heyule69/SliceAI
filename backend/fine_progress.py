@@ -15,11 +15,11 @@ def begin(project, command, options=None):
     if command == 'edit_auto':
         if reduce_audio:
             steps += [('transcribe', '重新转写与对照原声')]
+        elif options.get('subtitles') == 'checked':
+            steps += [('captions', '核对字幕')]
         steps += [('plan', '理解片段与制定方案'), ('review', '复核故事与删减依据')]
         if 'silence' in options.get('speech', []):
             steps += [('silence', '检测长静音')]
-        if options.get('subtitles') == 'checked' and not reduce_audio:
-            steps += [('captions', '核对字幕')]
     if command in ('edit_auto', 'edit_preview', 'edit_confirm', 'edit_export'):
         steps += [('video', '处理视频区间')]
         steps += [('finish', '导出成片' if command == 'edit_export' else '合成并校验成片')]
@@ -47,7 +47,7 @@ def update(project, stage):
         ('理解片段与剪辑要求', 'plan'), ('AI 正在拟定方案', 'plan'),
         ('复核故事完整性', 'review'), ('检测音频长静音', 'silence'),
         ('重新转写处理后音频', 'transcribe'), ('对照原声转写', 'transcribe'),
-        ('核对字幕', 'captions'), ('按所选要求生成预览', 'video'),
+        ('核对字幕', 'captions'), ('重新核对剪切点字幕', 'captions'), ('按所选要求生成预览', 'video'),
         ('检查素材与来源', 'video'), ('生成预览区间', 'video'), ('导出区间', 'video'),
         ('拼接视频区间', 'video'), ('降低背景音乐', 'audio'), ('准备声音试听', 'audio'),
         ('按剪辑区间裁切已处理音频', 'video'),

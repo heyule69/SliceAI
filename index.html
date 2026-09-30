@@ -54,7 +54,8 @@
             <section class="source-panel" aria-label="导入录播">
               <div class="panel-heading"><h2>录播文件</h2><span class="muted">拖入或选择</span></div>
               <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="选择或拖入录播视频"><div id="dropzoneContent"><span class="drop-icon"><svg><use href="#i-film"/></svg></span><h3>添加录播</h3><p>点击选择，或拖放到这里</p><small>MP4 · MKV · FLV · MOV</small></div></div>
-              <div class="attachments"><button class="attachment" id="subtitleButton" title="可选 SRT / VTT 字幕，右键移除"><svg><use href="#i-text"/></svg><span id="subtitleName">已有转写</span><svg class="attach-plus"><use href="#i-plus"/></svg></button><button class="attachment" id="chatButton" title="可选 XML / JSON 弹幕，右键移除"><svg><use href="#i-chat"/></svg><span id="chatName">添加弹幕</span><svg class="attach-plus"><use href="#i-plus"/></svg></button></div>
+              <div class="attachments"><div class="attachment-group"><button class="attachment" id="subtitleButton" title="可选 SRT / VTT 字幕"><svg><use href="#i-text"/></svg><span id="subtitleName">已有转写</span><svg class="attach-plus"><use href="#i-plus"/></svg></button><button class="attachment-remove" id="subtitleRemove" aria-label="移除字幕" title="移除字幕" hidden>×</button></div><div class="attachment-group"><button class="attachment" id="chatButton" title="可选 XML / JSON 弹幕"><svg><use href="#i-chat"/></svg><span id="chatName">添加弹幕</span><svg class="attach-plus"><use href="#i-plus"/></svg></button><button class="attachment-remove" id="chatRemove" aria-label="移除弹幕" title="移除弹幕" hidden>×</button></div></div>
+              <label class="audio-track-field" id="audioTrackField" hidden><span>处理音轨</span><select id="audioTrack" aria-label="处理音轨"></select></label>
               <div class="privacy-note" title="视频和 ASR 在本机处理。AI 接收转写与可选弹幕；开启来源复核时，还会发送候选片段的少量缩略画面。"><svg><use href="#i-shield"/></svg>本地转写 · AI 接收字幕与候选画面</div>
             </section>
             <section class="recent-panel" aria-label="最近任务"><div class="panel-heading"><h2>最近任务 <span id="recentCount">0</span></h2><button class="text-button" data-page="tasks">全部 <svg><use href="#i-chevron"/></svg></button></div><div id="recentTasks" class="scroll-area"></div></section>
@@ -74,7 +75,7 @@
         <section id="finePage" class="page" hidden></section>
         <section id="exportsPage" class="page library-page" hidden><div class="library-toolbar"><h2>已导出的文件</h2><span class="muted">保存在本机</span></div><div id="exportRecords" class="scroll-area export-list"></div></section>
       </main>
-      <footer class="statusbar"><span id="appStatus">就绪</span><span class="design-badge">v0.2.0</span></footer>
+      <footer class="statusbar"><span id="appStatus" role="button" tabindex="0" aria-label="查看处理队列">就绪</span><span class="design-badge">v0.2.0</span></footer>
     </div>
   </div>
   <dialog id="modal"><form method="dialog"><button class="icon-button close-modal" aria-label="关闭弹窗"><svg><use href="#i-close"/></svg></button></form><div id="modalContent"></div></dialog>

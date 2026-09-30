@@ -11,7 +11,7 @@ def resample_file(source, target, rate, boundary=lambda: None):
     import soundfile as sf
     import torch
     import torchaudio
-    with sf.SoundFile(source) as src,sf.SoundFile(target,'w',samplerate=rate,channels=1,subtype='FLOAT') as dst:
+    with sf.SoundFile(source) as src,sf.SoundFile(target,'w',samplerate=rate,channels=1,subtype='FLOAT',format='RF64') as dst:
         common=math.gcd(src.samplerate,rate)
         period_in,period_out=src.samplerate//common,rate//common
         context=max(period_in,math.ceil(32*max(1,src.samplerate/rate)/period_in)*period_in)
@@ -50,7 +50,7 @@ def stream_separate(source,target,predict,progress=lambda value:None,boundary=la
     rate=44100;chunk,hop=6*rate,6*rate//4
     window=torch.hann_window(chunk).clamp_min(1e-5).numpy()
     acc,den=np.zeros(chunk,dtype=np.float32),np.zeros(chunk,dtype=np.float32)
-    with sf.SoundFile(source) as src,sf.SoundFile(target,'w',samplerate=rate,channels=1,subtype='FLOAT') as dst:
+    with sf.SoundFile(source) as src,sf.SoundFile(target,'w',samplerate=rate,channels=1,subtype='FLOAT',format='RF64') as dst:
         if src.samplerate!=rate or src.channels!=1 or len(src)<1:raise ValueError('声音输入格式无效。')
         last=len(src)+chunk;start=0
         while True:
@@ -88,10 +88,60 @@ def load_model(folder):
     return model
 
 
+def valid_stem(path, total):
+    import soundfile as sf
+    try:
+        with sf.SoundFile(path) as src:
+            return src.samplerate == 48000 and src.channels == 1 and src.subtype == 'FLOAT' and len(src) == total
+    except (OSError, RuntimeError):
+        return False
+
+
+def save_stem(source, target, total, boundary=lambda:None):
+    """Keep precisely the samples the approved mixer reads, without inference."""
+    import numpy as np
+    import soundfile as sf
+    temp=target.with_suffix('.partial.wav')
+    try:
+        with sf.SoundFile(source) as speech,sf.SoundFile(temp,'w',samplerate=48000,channels=1,subtype='FLOAT',format='RF64') as dst:
+            for start in range(0,total,480000):
+                boundary()
+                count=min(480000,total-start)
+                samples=speech.read(count,dtype='float32')
+                if len(samples)!=count or not np.isfinite(samples).all():raise ValueError('声音模型产生了无效音频。')
+                dst.write(samples)
+        if not valid_stem(temp,total):raise ValueError('声音缓存时长不匹配。')
+        temp.replace(target)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def mix_files(original, speech, target, strength, boundary=lambda:None):
+    """The unchanged Float32 mix: strength 1 is exactly the approved speech."""
+    import numpy as np
+    import soundfile as sf
+    with sf.SoundFile(original) as raw,sf.SoundFile(speech) as clean,sf.SoundFile(target,'w',samplerate=48000,channels=1,subtype='FLOAT',format='RF64') as dst:
+        if raw.samplerate!=48000 or raw.channels!=1 or clean.samplerate!=48000 or clean.channels!=1:
+            raise ValueError('声音输入必须是 48kHz 单声道。')
+        total=len(raw)
+        if total < 1 or len(clean)<total:raise ValueError('声音时长不匹配。')
+        for start in range(0,total,480000):
+            boundary()
+            count=min(480000,total-start)
+            source=raw.read(count,dtype='float32');processed=clean.read(count,dtype='float32')
+            if len(source)!=count or len(processed)!=count:raise ValueError('声音时长不匹配。')
+            # Preserve the accepted computation, including Float32 rounding.
+            mixed=source*(1-strength)+processed*strength
+            if not np.isfinite(mixed).all():raise ValueError('声音处理结果无效。')
+            dst.write(mixed)
+    if not valid_stem(target,total):raise ValueError('声音时长不匹配。')
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--input',required=True);parser.add_argument('--output',required=True)
     parser.add_argument('--model',required=True);parser.add_argument('--strength',type=float,default=1.0)
+    parser.add_argument('--speech-cache')
     opts=parser.parse_args()
     if not math.isfinite(opts.strength) or not 0<=opts.strength<=1:raise ValueError('声音强度无效。')
     from audio_resources import AdaptiveResources
@@ -99,37 +149,34 @@ def main():
     os.environ['HF_HUB_OFFLINE']='1';os.environ['CUDA_VISIBLE_DEVICES']=''
     os.environ['OMP_NUM_THREADS']=str(resources.initial_threads)
     os.environ['MKL_NUM_THREADS']=str(resources.initial_threads)
-    import numpy as np
     import soundfile as sf
     import torch
     torch.set_num_threads(resources.initial_threads);torch.set_num_interop_threads(1)
     target=Path(opts.output)
     scratch=[target.with_suffix(s) for s in ('.input.partial.wav','.speech.partial.wav','.resampled.partial.wav','.partial.wav')]
+    stem=Path(opts.speech_cache) if opts.speech_cache else scratch[2]
     def report(value):print(json.dumps({'progress':round(value,1),'engine':ENGINE_ID}),flush=True)
     def boundary():resources.boundary(torch.set_num_threads)
     resources.start()
     try:
-        model=load_model(Path(opts.model))
         with sf.SoundFile(opts.input) as src:
             if src.samplerate!=48000 or src.channels!=1 or len(src)==0:raise ValueError('声音输入必须是非空 48kHz 单声道。')
             total=len(src)
-        with torch.inference_mode():
-            resample_file(opts.input,scratch[0],44100,boundary)
-            def predict(raw):return model(torch.from_numpy(raw)[None,None])[0,0,0].numpy()
-            stream_separate(scratch[0],scratch[1],predict,report,boundary)
-            resample_file(scratch[1],scratch[2],48000,boundary)
-        with sf.SoundFile(opts.input) as raw,sf.SoundFile(scratch[2]) as speech,sf.SoundFile(scratch[3],'w',samplerate=48000,channels=1,subtype='FLOAT') as dst:
-            for start in range(0,total,480000):
-                boundary()
-                count=min(480000,total-start)
-                original=raw.read(count,dtype='float32');processed=speech.read(count,dtype='float32')
-                if len(processed)!=count:raise ValueError('声音时长不匹配。')
-                # Strength 1 is exactly the accepted 04 speech stem without effects.
-                mixed=original*(1-opts.strength)+processed*opts.strength
-                if not np.isfinite(mixed).all():raise ValueError('声音处理结果无效。')
-                dst.write(mixed)
-        with sf.SoundFile(scratch[3]) as result:
-            if len(result)!=total:raise ValueError('声音时长不匹配。')
+        if not valid_stem(stem,total):
+            model=load_model(Path(opts.model))
+            with torch.inference_mode():
+                resample_file(opts.input,scratch[0],44100,boundary)
+                def predict(raw):return model(torch.from_numpy(raw)[None,None])[0,0,0].numpy()
+                stream_separate(scratch[0],scratch[1],predict,report,boundary)
+                resample_file(scratch[1],scratch[2],48000,boundary)
+            if opts.speech_cache:
+                save_stem(scratch[2],stem,total,boundary)
+                # Release the inference scratch before allocating the mixed WAV.
+                for path in scratch[:3]:path.unlink(missing_ok=True)
+            del model
+        else:
+            print(json.dumps({'cached_speech':True,'engine':ENGINE_ID}),flush=True)
+        mix_files(opts.input,stem,scratch[3],opts.strength,boundary)
         scratch[3].replace(target);report(100)
     finally:
         resources.close()

@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "destination": "asr-model/SenseVoice",
+  "archive": {
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
+    "max_bytes": 300000000
+  },
+  "files": {
+    "model.int8.onnx": {
+      "bytes": 239233841,
+      "sha256": "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51",
+      "member": "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/model.int8.onnx"
+    },
+    "tokens.txt": {
+      "bytes": 315894,
+      "sha256": "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc",
+      "member": "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/tokens.txt"
+    },
+    "silero_vad.onnx": {
+      "bytes": 643854,
+      "sha256": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+      "source": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
+    },
+    "SenseVoice-MODEL-LICENSE.txt": {
+      "bytes": 5306,
+      "sha256": "7dba975a2069691db4992b0592d70828b330d2f8a30a71450f4e152a554e84f8",
+      "builtin": "SenseVoice-MODEL-LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/modelscope/FunASR/12e417f4fa4490296ea2d81c5352ea2de8e4cac2/MODEL_LICENSE"
+    },
+    "Silero-LICENSE.txt": {
+      "bytes": 1075,
+      "sha256": "2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b",
+      "builtin": "Silero-LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/snakers4/silero-vad/1e261b036686cd0017d500ee96acd1c4ba572a9d/LICENSE"
+    }
+  },
+  "manifest": {
+    "model": "SenseVoice Small INT8 (sherpa-onnx 2024-07-17 export)",
+    "author": "FunAudioLLM / Alibaba Group; ONNX export by sherpa-onnx",
+    "model_source": "https://huggingface.co/FunAudioLLM/SenseVoiceSmall",
+    "onnx_source": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
+    "vad_source": "https://github.com/snakers4/silero-vad",
+    "licenses": {
+      "SenseVoice-MODEL-LICENSE.txt": "https://raw.githubusercontent.com/modelscope/FunASR/12e417f4fa4490296ea2d81c5352ea2de8e4cac2/MODEL_LICENSE",
+      "Silero-LICENSE.txt": "https://raw.githubusercontent.com/snakers4/silero-vad/1e261b036686cd0017d500ee96acd1c4ba572a9d/LICENSE"
+    },
+    "files": {
+      "model.int8.onnx": {
+        "bytes": 239233841,
+        "sha256": "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51"
+      },
+      "tokens.txt": {
+        "bytes": 315894,
+        "sha256": "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc"
+      },
+      "silero_vad.onnx": {
+        "bytes": 643854,
+        "sha256": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6"
+      }
+    }
+  }
+}
