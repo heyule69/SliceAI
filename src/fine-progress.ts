@@ -68,6 +68,26 @@ export type CutCandidate={id:string;start:number|null;end:number|null;text?:stri
 export type CutResultVersion={duration:number;source_duration?:number;removed_duration?:number;cut_ledger?:CutCandidate[];candidate_ledger?:{suggested:number;blocked:number;applied:number;candidates:CutCandidate[]};auto_review?:{suggested_removals?:number;blocked_removals?:number;applied_removals?:number;reviewed_removals?:number;protected?:unknown[]};removed?:{start:number;end:number;reason:string;text:string;candidate_ids?:string[]}[]};
 const count=(value:unknown)=>typeof value==='number'&&Number.isFinite(value)?Math.max(0,Math.floor(value)):0;
 
+export function blockedReasonText(candidate:{block_reason?:string}){
+ const reason=(candidate.block_reason||'').trim();
+ return reason||'未写出具体原因，这段原声已保留';
+}
+
+/** Distinct reasons, capped so the summary stays readable; the ledger lists every candidate. */
+export function blockedReasonSummary(candidates:{status:string;block_reason?:string}[]){
+ const blocked=candidates.filter(c=>c.status==='blocked');
+ if(!blocked.length)return '';
+ const reasons=[...new Set(blocked.map(blockedReasonText))];
+ const shown=reasons.slice(0,3);
+ const extra=reasons.length-shown.length;
+ return `被阻止 ${blocked.length} 处，这些内容仍留在成片里：${shown.join('；')}${extra?`；另有 ${extra} 种原因，展开列表可查看`:''}`;
+}
+
+export function cacheBudgetNote(storage?:{over_soft_budget?:boolean;message?:string}|null){
+ if(storage?.over_soft_budget&&storage.message)return storage.message;
+ return '处理音频缓存在本机，软预算 16 GiB。被版本、试听或成片引用的文件会保留，因此缓存可以超过 16 GiB；超过时只清理没有被引用的处理音频。';
+}
+
 /** Counts are decisions; saved duration is the effective result, never a planned cut. */
 export function cutResult(version:CutResultVersion,sourceStart:number,sourceEnd:number){
  const sourceDuration=Math.max(0,sourceEnd-sourceStart);
@@ -79,8 +99,8 @@ export function cutResult(version:CutResultVersion,sourceStart:number,sourceEnd:
  const blocked=ledger?candidates.filter(c=>c.status==='blocked').length:count(version.auto_review?.blocked_removals??version.auto_review?.protected?.length);
  const suggested=ledger?candidates.length:count(version.auto_review?.suggested_removals??version.auto_review?.reviewed_removals??applied);
  const unchanged=removedDuration<.03;
- const reasons=[...new Set(candidates.filter(c=>c.status==='blocked').map(c=>c.block_reason||c.reason).filter(Boolean))];
- const explanation=unchanged?reasons.length?reasons.slice(0,2).join('；'):blocked?'建议删点暂时无法安全定位，相关内容已保留。':candidates.some(c=>c.status==='restored')?'删减内容已恢复，当前保留完整片段。':'当前要求下没有找到可安全删减的内容。':'';
+ const blockedNote=blockedReasonSummary(candidates);
+ const explanation=blockedNote||(unchanged?candidates.some(c=>c.status==='restored')?'删减内容已恢复，当前保留完整片段。':'当前要求下没有找到可安全删减的内容。':'');
  return {sourceDuration,outputDuration,removedDuration,suggested,blocked,applied,unchanged,explanation,candidates};
 }
 
@@ -103,8 +123,8 @@ export function cutLedgerHtml(version:CutResultVersion,sourceStart:number,busy=f
  return `<details class="fine-deletions fine-cut-ledger"><summary>查看删点与保留原因 · ${candidates.length} 处</summary><p class="fine-cut-note">时间相对粗剪片段；点击时间可查看原声。</p>${candidates.map(c=>{
   const intervals=c.status==='applied'&&c.effective_intervals?c.effective_intervals.filter(locatedInterval):locatedInterval(c)?[c]:[];
   const retained=c.status==='suggested'&&(c.decision==='keep'||(!c.decision&&!busy&&!!c.reason));
-  const label=c.status==='applied'?(c.decision==='manual'?'手动应用':'已应用'):c.status==='blocked'||retained?'已保留':c.status==='restored'?'已恢复':'待处理';
+  const label=c.status==='applied'?(c.decision==='manual'?'手动应用':'已应用'):c.status==='blocked'?'被阻止':retained?'已保留':c.status==='restored'?'已恢复':'待处理';
   const times=intervals.map(interval=>`<button class="text-button" data-fine-action="seek-source" data-seconds="${interval.start}">${time(Math.max(0,interval.start!-sourceStart))} — ${time(Math.max(0,interval.end!-sourceStart))}</button>`).join('');
-  return `<article class="fine-cut-item ${c.status==='applied'?'applied':c.status==='blocked'?'blocked':'retained'}"><div class="fine-cut-item-head">${times||'<span class="fine-cut-unlocated">暂时无法定位</span>'}<span class="fine-cut-label">${label}</span></div><p>${esc(c.reason)}</p>${c.text||c.quote?`<blockquote>${esc(c.text||c.quote)}</blockquote>`:''}${c.status==='blocked'&&c.block_reason?`<small>保留原因：${esc(c.block_reason)}</small>`:''}${restorableCandidate(version,c.id)?`<button class="secondary-button" data-fine-action="restore-candidate" data-candidate="${esc(c.id)}" ${busy?'disabled':''}>恢复这段</button>`:''}</article>`;
+  return `<article class="fine-cut-item ${c.status==='applied'?'applied':c.status==='blocked'?'blocked':'retained'}"><div class="fine-cut-item-head">${times||'<span class="fine-cut-unlocated">暂时无法定位</span>'}<span class="fine-cut-label">${label}</span></div><p>${esc(c.reason)}</p>${c.text||c.quote?`<blockquote>${esc(c.text||c.quote)}</blockquote>`:''}${c.status==='blocked'?`<small>被阻止：${esc(blockedReasonText(c))}。这段没有从成片删掉。</small>`:''}${restorableCandidate(version,c.id)?`<button class="secondary-button" data-fine-action="restore-candidate" data-candidate="${esc(c.id)}" ${busy?'disabled':''}>恢复这段</button>`:''}</article>`;
  }).join('')}</details>`;
 }

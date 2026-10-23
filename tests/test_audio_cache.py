@@ -70,6 +70,9 @@ class StorageTest(unittest.TestCase):
             status = ensure_space(editor, folder, 20, allocate_bytes=0, limit_bytes=0)
             self.assertTrue(path.is_file())
             self.assertEqual(status['cache_bytes'], 100)
+            self.assertTrue(status['over_soft_budget'])
+            self.assertIn('软预算', status['message'])
+            self.assertIn('被引用的处理音频', status['message'])
 
     def test_global_budget_cleans_other_projects_and_protects_saved_references(self):
         with tempfile.TemporaryDirectory() as td:
