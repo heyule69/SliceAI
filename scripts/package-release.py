@@ -59,7 +59,14 @@ def verify_build(root=ROOT, require_alignment=False):
     return build, installer, components
 
 
-def package(root=ROOT, require_alignment=False):
+def load_signer():
+    spec = importlib.util.spec_from_file_location('sign_installer', Path(__file__).with_name('sign-installer.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def package(root=ROOT, require_alignment=False, sign=False, require_signature=False):
     root = Path(root).resolve()
     build, installer, components = verify_build(root, require_alignment)
     release = root / 'release'
@@ -74,7 +81,13 @@ def package(root=ROOT, require_alignment=False):
         shutil.copy2(build / 'sliceai.exe', portable / 'SliceAI.exe')
         shutil.copytree(build / 'worker', portable / 'worker')
         shutil.copy2(root / 'README.md', stage / 'README.md')
-        shutil.copy2(installer, stage / installer.name)
+        staged_installer = stage / installer.name
+        shutil.copy2(installer, staged_installer)
+        # Sign only when asked. No certificate stays unsigned; --require-signature
+        # raises before the previous release directory is replaced.
+        signature = None
+        if sign or require_signature:
+            signature = load_signer().sign_installer(staged_installer, require=require_signature)
         # Verify the copied payload, including models/licenses, before replacing a release.
         verify_workers(portable / 'worker', require_alignment)
         checksums = {path.relative_to(stage).as_posix(): checksum(path)
@@ -90,9 +103,12 @@ def package(root=ROOT, require_alignment=False):
             if backup.exists() and not release.exists():
                 backup.rename(release)
             raise
-    return {'installer': str(release / installer.name), 'portable': str(release / f'SliceAI-{VERSION}/SliceAI.exe'),
-            'installer_mb': round(installer.stat().st_size / 1024**2, 2), 'components': components,
-            'previous_release': str(backup) if backup.exists() else None}
+    result = {'installer': str(release / installer.name), 'portable': str(release / f'SliceAI-{VERSION}/SliceAI.exe'),
+              'installer_mb': round((release / installer.name).stat().st_size / 1024**2, 2), 'components': components,
+              'previous_release': str(backup) if backup.exists() else None}
+    if signature is not None:
+        result['signature'] = signature
+    return result
 
 
 def main(argv=None):
@@ -101,16 +117,19 @@ def main(argv=None):
     mode.add_argument('--dry-run', action='store_true', help='Show paths only; do not verify assets or write a release.')
     mode.add_argument('--verify-only', action='store_true', help='Verify source build assets; do not change release/.')
     parser.add_argument('--require-alignment', action='store_true', help='Reject builds without the independent fine-edit alignment worker.')
+    parser.add_argument('--sign', action='store_true', help='Sign the staged installer when SLICEAI_SIGN_PFX points at an existing certificate. Without one, packaging continues unsigned.')
+    parser.add_argument('--require-signature', action='store_true', help='Stop before replacing release/ when the installer cannot be signed. Does not create a certificate.')
     args = parser.parse_args(argv)
     try:
         if args.dry_run:
             result = {'build': str(ROOT / 'src-tauri/target/release'), 'release': str(ROOT / 'release'),
-                      'require_alignment': args.require_alignment, 'dry_run': True, 'verified': False, 'downloads': False}
+                      'require_alignment': args.require_alignment, 'dry_run': True, 'verified': False, 'downloads': False,
+                      'sign': args.sign, 'require_signature': args.require_signature}
         elif args.verify_only:
             build, installer, components = verify_build(require_alignment=args.require_alignment)
             result = {'build': str(build), 'installer': str(installer), 'components': components, 'verified': True}
         else:
-            result = package(require_alignment=args.require_alignment)
+            result = package(require_alignment=args.require_alignment, sign=args.sign, require_signature=args.require_signature)
     except (OSError, ValueError) as exc:
         parser.exit(1, str(exc) + '\n')
     if 'components' in result and not result['components']['alignment']:
