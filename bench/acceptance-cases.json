@@ -1,0 +1,64 @@
+{
+  "schema": "sliceai.acceptance-cases.v1",
+  "instructions": "发布前案例。默认 not_measured。把某次测量的 JSON 放到 test-results/acceptance/<id>.json，或用 --measured-dir 指给脚本后，该项变为 measured。不要把 API Key、权重或私人录播放进仓库。",
+  "cases": [
+    {
+      "id": "long-recording",
+      "title": "至少一场长录播",
+      "command": "python -X utf8 scripts/benchmark.py measure --command-json <本地命令.json> --video <录播> --output-dir test-results/bench/long"
+    },
+    {
+      "id": "multi-track",
+      "title": "多音轨选择与同一音轨贯穿转写、预览、导出",
+      "command": "python -X utf8 scripts/benchmark.py measure --command-json <含 --audio-track 的命令.json> --video <多音轨录播> --output-dir test-results/bench/multitrack"
+    },
+    {
+      "id": "late-audio-pts",
+      "title": "音频晚起与 PTS 空隙",
+      "note": "合成非零 PTS 由 scripts/test_benchmark.py 覆盖。实盘素材仍要单独测量。",
+      "command": "python -X utf8 scripts/benchmark.py measure --command-json <命令.json> --video <晚起或有空隙的素材> --output-dir test-results/bench/pts"
+    },
+    {
+      "id": "cross-window-story",
+      "title": "跨窗口长故事仍是一条",
+      "command": "准备 annotations.json 与 results.json 后：python -X utf8 scripts/benchmark.py evaluate --annotations <annotations.json> --results <results.json> --report test-results/acceptance/cross-window-story.json"
+    },
+    {
+      "id": "retellings",
+      "title": "重复讲述不列出两次",
+      "note": "重叠窗口和近重复原文由 tests/test_editorial.py 合并。整场录播是否还重复，仍要标注测量。",
+      "command": "python -X utf8 scripts/benchmark.py evaluate --annotations <annotations.json> --results <results.json> --report test-results/acceptance/retellings.json"
+    },
+    {
+      "id": "external-playback",
+      "title": "外部播放来源复核",
+      "command": "在独立验收 profile 跑带来源复核的任务，把结果摘要存为 test-results/acceptance/external-playback.json"
+    },
+    {
+      "id": "quiet-laughter",
+      "title": "安静笑声不被误删",
+      "command": "python -X utf8 scripts/benchmark.py listen --gold <笑哭金标.json> --proposals <提案.json> --report test-results/acceptance/quiet-laughter.json"
+    },
+    {
+      "id": "heavy-bgm",
+      "title": "BGM 较重",
+      "command": "python -X utf8 scripts/benchmark.py listen --gold <音乐金标.json> --proposals <提案.json> --report test-results/acceptance/heavy-bgm.json"
+    },
+    {
+      "id": "caption-cuts",
+      "title": "字幕切点与待核对",
+      "note": "合成 fixture 见 tests/test_word_timeline.py：整行分歧会标到全部字幕，收窄后只剩分歧字；剪掉这些字后待核对为 0。私人录播上的 14/63 未重测。",
+      "command": "python -X utf8 scripts/benchmark.py listen --gold <字幕切点金标.json> --proposals <提案.json> --report test-results/acceptance/caption-cuts.json"
+    },
+    {
+      "id": "cancel-recovery",
+      "title": "取消与崩溃恢复",
+      "command": "在 Windows 上取消进行中的任务并重启，把观察记录存为 test-results/acceptance/cancel-recovery.json"
+    },
+    {
+      "id": "moved-source",
+      "title": "移动原素材后的提示",
+      "command": "移动原文件后重试预览，把结果摘要存为 test-results/acceptance/moved-source.json"
+    }
+  ]
+}
