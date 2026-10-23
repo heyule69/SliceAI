@@ -103,6 +103,156 @@ def evaluate(reference, result, threshold=.5):
     return report
 
 
+LISTENING_CATEGORIES = ('音乐', '无音乐', '重说', '笑哭', '混语')
+_CATEGORY_ALIASES = {'music': '音乐', 'no-music': '无音乐', 'nomusic': '无音乐'}
+
+
+def listening_category(value):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError('Listening sample category is required.')
+    mapped = _CATEGORY_ALIASES.get(value.strip().casefold(), value.strip())
+    if mapped not in LISTENING_CATEGORIES:
+        raise ValueError(f'Unknown listening category {value!r}; expected one of {", ".join(LISTENING_CATEGORIES)}.')
+    return mapped
+
+
+def _timed_entries(rows, label):
+    if not isinstance(rows, list):
+        raise ValueError(f'{label} must be an array.')
+    result = []; seen = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError(f'{label} entry must be an object.')
+        ident = row.get('id')
+        if not isinstance(ident, str) or not ident.strip() or ident in seen:
+            raise ValueError(f'{label} ids must be unique non-empty strings.')
+        seen.add(ident)
+        start, end = row.get('start'), row.get('end')
+        if type(start) not in (int, float) or type(end) not in (int, float) or not math.isfinite(start + end) or start < 0 or end <= start:
+            raise ValueError(f'{label} {ident} has invalid bounds.')
+        result.append({'id': ident, 'start': float(start), 'end': float(end)})
+    return result
+
+
+def _percentile(values, fraction):
+    if not values:
+        return None
+    ordered = sorted(values)
+    return ordered[max(0, math.ceil(fraction * len(ordered)) - 1)]
+
+
+def _score_sample(gold, proposal, hit_threshold):
+    deletable = _timed_entries(gold.get('deletable', []), f'{gold["id"]} deletable')
+    protected = _timed_entries(gold.get('protected', []), f'{gold["id"]} protected')
+    cuts = _timed_entries(proposal.get('cuts', []), f'{gold["id"]} cuts')
+    ranking = []
+    for ci, cut in enumerate(cuts):
+        for gi, expected in enumerate(deletable):
+            ratio = overlap((cut['start'], cut['end']), (expected['start'], expected['end'])) / (expected['end'] - expected['start'])
+            ranking.append((ratio, ci, gi))
+    ranking.sort(reverse=True)
+    used_cuts, used_gold = set(), set()
+    matches = []
+    for ratio, ci, gi in ranking:
+        if ratio < hit_threshold or ci in used_cuts or gi in used_gold:
+            continue
+        used_cuts.add(ci); used_gold.add(gi)
+        cut, expected = cuts[ci], deletable[gi]
+        matches.append({'gold_id': expected['id'], 'cut_id': cut['id'],
+                        'start_error': abs(cut['start'] - expected['start']),
+                        'end_error': abs(cut['end'] - expected['end']),
+                        'overlap_ratio': ratio})
+    errors = [value for match in matches for value in (match['start_error'], match['end_error'])]
+    def hits_protected(cut):
+        return any(overlap((cut['start'], cut['end']), (row['start'], row['end'])) > .002 for row in protected)
+    return {'deletable': len(deletable), 'proposals': len(cuts), 'hits': len(matches),
+            'missed': len(deletable) - len(matches),
+            'false_cuts': len(cuts) - len(matches),
+            'protected_overlap_cuts': sum(hits_protected(cut) for cut in cuts),
+            'boundary_errors': errors,
+            'matches_within_150ms': sum(max(match['start_error'], match['end_error']) <= .15 for match in matches),
+            'matches': matches}
+
+
+def listening_report(gold, proposals, hit_threshold=.5):
+    """Score proposed fine cuts against human deletable ranges.
+
+    Hit rate is matched gold ranges / gold ranges. A proposal that does not
+    cover a gold range at `hit_threshold` of that range is a false cut.
+    Boundary error is reported only for matched pairs. Missing files stay
+    not_measured; malformed files raise instead of inventing a score.
+    """
+    if not isinstance(gold, dict) or not isinstance(proposals, dict):
+        raise ValueError('Listening gold and proposals must be JSON objects.')
+    if 'samples' not in gold or 'samples' not in proposals:
+        return {'status': 'not_measured',
+                'reason': 'Supply gold samples and proposed cuts. Real recordings stay outside the repo.'}
+    if not isinstance(gold['samples'], list) or not isinstance(proposals['samples'], list):
+        raise ValueError('Listening samples must be arrays.')
+    if not 0 < hit_threshold <= 1:
+        raise ValueError('Hit threshold must be within (0, 1].')
+    proposed = {}
+    for row in proposals['samples']:
+        if not isinstance(row, dict) or not isinstance(row.get('id'), str) or row['id'] in proposed:
+            raise ValueError('Proposal sample ids must be unique strings.')
+        proposed[row['id']] = row
+    seen = set(); per_sample = []; totals = {key: 0 for key in
+        ('deletable', 'proposals', 'hits', 'missed', 'false_cuts', 'protected_overlap_cuts', 'matches_within_150ms')}
+    errors = []; by_category = {}
+    for sample in gold['samples']:
+        if not isinstance(sample, dict):
+            raise ValueError('Gold sample must be an object.')
+        ident = sample.get('id')
+        if not isinstance(ident, str) or not ident or ident in seen:
+            raise ValueError('Gold sample ids must be unique non-empty strings.')
+        seen.add(ident)
+        category = listening_category(sample.get('category'))
+        if ident not in proposed:
+            per_sample.append({'id': ident, 'category': category, 'status': 'not_measured',
+                               'reason': 'No proposal sample with this id.'})
+            continue
+        scored = _score_sample(sample, proposed[ident], hit_threshold)
+        boundary = scored.pop('boundary_errors')
+        matches = scored.pop('matches')
+        errors.extend(boundary)
+        for key in totals:
+            totals[key] += scored[key]
+        bucket = by_category.setdefault(category, {key: 0 for key in totals})
+        for key in totals:
+            bucket[key] += scored[key]
+        per_sample.append({'id': ident, 'category': category, 'status': 'measured', **scored,
+                           'hit_rate': (scored['hits'] / scored['deletable']) if scored['deletable'] else None,
+                           'max_boundary_error_seconds': max(boundary) if boundary else None,
+                           'matches': matches})
+    def pack(bucket):
+        return {**bucket, 'hit_rate': (bucket['hits'] / bucket['deletable']) if bucket['deletable'] else None,
+                'median_boundary_error_seconds': statistics.median(errors) if errors else None,
+                'p95_boundary_error_seconds': _percentile(errors, .95),
+                'max_boundary_error_seconds': max(errors) if errors else None}
+    # Category boundary stats use the same global error list only at the top.
+    # Per-category boundary figures are filled from that category's samples.
+    categories = {}
+    for category, bucket in by_category.items():
+        cat_errors = [value for sample in per_sample if sample.get('category') == category
+                      for match in sample.get('matches', []) for value in (match['start_error'], match['end_error'])]
+        categories[category] = {**bucket,
+                                'hit_rate': (bucket['hits'] / bucket['deletable']) if bucket['deletable'] else None,
+                                'median_boundary_error_seconds': statistics.median(cat_errors) if cat_errors else None,
+                                'p95_boundary_error_seconds': _percentile(cat_errors, .95),
+                                'max_boundary_error_seconds': max(cat_errors) if cat_errors else None}
+    measured = any(sample.get('status') == 'measured' for sample in per_sample)
+    report = {'status': 'measured' if measured else 'not_measured',
+              'unmatched_proposal_ids': sorted(set(proposed) - seen),
+              'hit_threshold': hit_threshold,
+              'samples': per_sample,
+              'by_category': categories,
+              **pack(totals),
+              'note': 'Synthetic fixtures do not accept fine-cut quality. Drop private labels under test-results/listening/ or .test-artifacts/listening/.'}
+    if not measured:
+        report['reason'] = 'Every gold sample lacked a proposal.'
+    return report
+
+
 def disk_bytes(folder):
     return sum(path.stat().st_size for path in Path(folder).rglob('*') if path.is_file())
 
@@ -253,6 +403,11 @@ def main(argv=None):
     synth = commands.add_parser('synthetic'); synth.add_argument('--output-dir', type=Path, default=ROOT / 'test-results/bench' / uuid.uuid4().hex[:8])
     scoring = commands.add_parser('evaluate'); scoring.add_argument('--annotations', type=Path, required=True); scoring.add_argument('--results', type=Path, required=True)
     scoring.add_argument('--report', type=Path, required=True); scoring.add_argument('--iou-threshold', type=float, default=.5)
+    listen = commands.add_parser('listen', help='Score fine-cut proposals against listening gold labels.')
+    listen.add_argument('--gold', type=Path, required=True)
+    listen.add_argument('--proposals', type=Path, required=True)
+    listen.add_argument('--report', type=Path)
+    listen.add_argument('--hit-threshold', type=float, default=.5)
     measure = commands.add_parser('measure'); measure.add_argument('--command-json', type=Path, required=True); measure.add_argument('--output-dir', type=Path, required=True)
     measure.add_argument('--video', type=Path, help='Optional explicit long recording, only probed for media duration.')
     measure.add_argument('--cwd', type=Path, default=ROOT)
@@ -271,6 +426,16 @@ def main(argv=None):
                   'quality': evaluate(reference, result, args.iou_threshold),
                   'performance': {'status': 'not_measured', 'reason': 'Evaluation scores supplied results; no pipeline was run.'}}
         write_json(args.report, report)
+    elif args.mode == 'listen':
+        if not 0 < args.hit_threshold <= 1:
+            parser.error('Hit threshold must be within (0, 1].')
+        gold = read_json(args.gold)
+        report = {'schema_version': 1, 'kind': 'listening-evaluation',
+                  'data_kind': 'example_fixture' if isinstance(gold, dict) and gold.get('example_fixture') else 'supplied_listening_labels',
+                  'quality': listening_report(gold, read_json(args.proposals), args.hit_threshold),
+                  'performance': {'status': 'not_measured', 'reason': 'Listening evaluation scores supplied ranges; no model or media ran.'}}
+        if args.report:
+            write_json(args.report, report)
     else:
         folder = fresh_folder(args.output_dir); report = {'schema_version': 1, 'kind': 'explicit-command', 'artifacts_dir': str(folder), 'environment': environment(),
                     'performance': measured_command(read_json(args.command_json), folder, args.cwd),
