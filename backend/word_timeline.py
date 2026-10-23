@@ -88,6 +88,28 @@ def source_text(row, words):
     return join_words(words)
 
 
+def word_needs_review(word, row):
+    """True when this aligned word sits inside a disagreed source span.
+
+    A caption_warning on the parent row is not itself a span: long VAD rows
+    used to paint every retained cue. Only an explicit span splits the cue.
+    """
+    if row.get('original_fallback'):
+        return False
+    spans = row.get('caption_review_spans')
+    if not isinstance(spans, list):
+        return False
+    for span in spans:
+        if not isinstance(span, dict):
+            continue
+        start, end = span.get('start'), span.get('end')
+        if type(start) not in (int, float) or type(end) not in (int, float):
+            continue
+        if min(word['end'], end) - max(word['start'], start) > EPSILON:
+            return True
+    return False
+
+
 def clipped_word_cues(row, interval, offset):
     """Group retained aligned words without repeating cut-away source text."""
     words = words_for(row)
@@ -103,7 +125,8 @@ def clipped_word_cues(row, interval, offset):
     for word in retained:
         if group and (len(join_words(group + [word])) > 36
                       or word['end'] - group[0]['start'] > 6
-                      or word['start'] - group[-1]['end'] > .8):
+                      or word['start'] - group[-1]['end'] > .8
+                      or word_needs_review(word, row) != word_needs_review(group[-1], row)):
             cues.append(group)
             group = []
         group.append(word)

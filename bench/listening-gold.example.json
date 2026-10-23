@@ -1,0 +1,42 @@
+{
+  "schema": "sliceai.listening-gold.v1",
+  "example_fixture": true,
+  "instructions": "合成区间，不是私人录播，也不能当作细剪已验收。人工听辨时复制本文件，把 samples 换成音乐、无音乐、重说、笑哭、混语的可删范围，保存到 Git 忽略的 test-results/listening/ 或 .test-artifacts/listening/。deletable 是确认可删的原视频秒数，protected 是不可误切的原声。",
+  "samples": [
+    {
+      "id": "synth-music",
+      "category": "音乐",
+      "description": "合成：说话之间有一段确认可删的纯配乐。",
+      "deletable": [{"id": "bed", "start": 2.0, "end": 3.2}],
+      "protected": [{"id": "speech", "start": 0.0, "end": 2.0}, {"id": "after", "start": 3.2, "end": 6.0}]
+    },
+    {
+      "id": "synth-dry",
+      "category": "无音乐",
+      "description": "合成：无背景音乐时的确认停顿。",
+      "deletable": [{"id": "pause", "start": 5.0, "end": 6.4}],
+      "protected": [{"id": "talk", "start": 0.0, "end": 5.0}]
+    },
+    {
+      "id": "synth-retake",
+      "category": "重说",
+      "description": "合成：句首重复音节，后文保留。",
+      "deletable": [{"id": "syllable", "start": 1.0, "end": 1.4}],
+      "protected": [{"id": "rest", "start": 1.4, "end": 4.0}]
+    },
+    {
+      "id": "synth-laughter",
+      "category": "笑哭",
+      "description": "合成：笑之前有一句可删的重复，笑声本身不可删。",
+      "deletable": [{"id": "preface", "start": 1.0, "end": 1.3}],
+      "protected": [{"id": "laugh", "start": 4.0, "end": 6.0}]
+    },
+    {
+      "id": "synth-mixed",
+      "category": "混语",
+      "description": "合成：中英夹杂里的重复英文填充。",
+      "deletable": [{"id": "filler", "start": 8.0, "end": 8.45}],
+      "protected": [{"id": "line", "start": 8.45, "end": 11.0}]
+    }
+  ]
+}

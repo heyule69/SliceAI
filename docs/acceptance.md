@@ -46,6 +46,27 @@ python -X utf8 scripts/benchmark.py evaluate --annotations D:/qa/annotations.jso
 
 标注不全时不能解释为召回率/误选率；脚本输出计数，不自动宣布产品质量通过。缺少某类标注或结果时对应指标报告未测。评价供应的结果文件，不自动重新执行模型，必须记住结果对应的 commit 和配置。
 
+## 细剪听辨金标
+
+人工听辨确认可删范围后，用同一套脚本打分，不另起一套工具。格式见 `bench/listening-gold.example.json` 与 `bench/listening-proposals.example.json`。示例是合成区间，覆盖音乐、无音乐、重说、笑哭、混语；真实样本放在 Git 忽略的 `test-results/listening/` 或 `.test-artifacts/listening/`。
+
+```powershell
+python -X utf8 scripts/benchmark.py listen --gold bench/listening-gold.example.json --proposals bench/listening-proposals.example.json --report test-results/listening/example.json
+```
+
+命中指提案覆盖该可删区间的比例达到 `--hit-threshold`（默认 0.5）。未配对的提案计为误切；与 `protected` 重叠超过 2 ms 的提案另计。边界误差只统计已配对的起止。没有 `samples` 时结果为 `not_measured`。此命令不读媒体、不下载模型、不调用 AI。示例能算出命中率和约 40 ms 的边界误差，不代表细剪质量已验收。字段和拟定目标见 [细剪改造记录](fine-editing-redesign.md)。
+
+## 发布前案例清单
+
+`bench/acceptance-cases.json` 列出长录播、多音轨、音频晚起/PTS 空隙、跨窗口长故事、重复讲述、外部播放、安静笑声、BGM、字幕切点、取消/崩溃恢复、移动原素材。默认这些案例都是 `not_measured`。
+
+```powershell
+python -X utf8 scripts/acceptance_report.py
+python -X utf8 scripts/acceptance_report.py --benchmark-report test-results/bench/<id>/report.json --measured-dir test-results/acceptance --output test-results/acceptance/checklist.json
+```
+
+脚本总会给两个离线示例打分：`bench/annotations.example.json` 的事件/字幕评价，以及上面的听辨示例。它们的 `data_kind` 是 `example_fixture`，`product_acceptance` 保持 false。把某次真实测量存成 `test-results/acceptance/<案例 id>.json`（对象里可写 `"status": "measured"`）后，该项从 `not_measured` 变为 `measured`。`--benchmark-report` 只摘已有的 `performance`，没有 `wall_seconds` 或采样到的资源数据时资源仍是 `not_measured`。默认运行不下载 SenseVoice、BandIt 或 Qwen 权重，也不调用 AI；缺文件时退出码仍为 0。
+
 ## 发布前真实验收
 
 覆盖至少一场长录播及多音轨、音频晚起/PTS 空隙、跨窗口长故事、重复讲述、外部播放、安静笑声、BGM 较重、字幕切点、取消/崩溃恢复、移动原素材等案例。按事件记录漏剪/误选，按细剪记录误删/字幕同步，按完整运行记录耗时、CPU、峰值工作集和磁盘峰值。声音缓存 16 GiB 是软预算；版本和试听引用保护文件，可能超过预算。磁盘预检与短合成通过也不能代替实盘不足/取消和长期缓存验收。

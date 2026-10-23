@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from benchmark import evaluate, main, probe, source_duration
+from benchmark import evaluate, listening_report, main, probe, source_duration
 
 
 class EvaluationTest(unittest.TestCase):
@@ -30,6 +30,55 @@ class EvaluationTest(unittest.TestCase):
         self.assertEqual(metrics['subtitles']['text_mismatches'], 1)
         self.assertEqual(metrics['selection']['status'], 'not_measured')
         self.assertEqual(evaluate({}, {})['subtitles']['status'], 'not_measured')
+
+    def test_listening_gold_scores_hits_false_cuts_and_boundary_error(self):
+        gold = {'samples': [
+            {'id': 'retake', 'category': '重说',
+             'deletable': [{'id': 'syllable', 'start': 1.0, 'end': 1.4}],
+             'protected': [{'id': 'rest', 'start': 1.4, 'end': 4.0}]},
+            {'id': 'laugh', 'category': '笑哭',
+             'deletable': [{'id': 'preface', 'start': 1.0, 'end': 1.3}],
+             'protected': [{'id': 'laugh', 'start': 4.0, 'end': 6.0}]},
+            {'id': 'music', 'category': 'music', 'deletable': [{'id': 'bed', 'start': 2, 'end': 3}]}]}
+        proposals = {'samples': [
+            {'id': 'retake', 'cuts': [{'id': 'ok', 'start': 1.04, 'end': 1.36},
+                                      {'id': 'extra', 'start': 4.2, 'end': 4.6}]},
+            {'id': 'laugh', 'cuts': [{'id': 'into-laugh', 'start': 3.8, 'end': 5.0}]},
+            {'id': 'music', 'cuts': []}]}
+        report = listening_report(gold, proposals)
+        self.assertEqual(report['status'], 'measured')
+        retake = next(sample for sample in report['samples'] if sample['id'] == 'retake')
+        self.assertEqual(retake['hits'], 1)
+        self.assertEqual(retake['false_cuts'], 1)
+        self.assertAlmostEqual(retake['max_boundary_error_seconds'], .04)
+        self.assertEqual(retake['protected_overlap_cuts'], 0)
+        laugh = next(sample for sample in report['samples'] if sample['id'] == 'laugh')
+        self.assertEqual(laugh['hits'], 0)
+        self.assertEqual(laugh['false_cuts'], 1)
+        self.assertEqual(laugh['protected_overlap_cuts'], 1)
+        self.assertEqual(report['by_category']['音乐']['missed'], 1)
+        self.assertEqual(report['hits'], 1)
+        self.assertEqual(report['false_cuts'], 2)
+        self.assertEqual(listening_report({}, {})['status'], 'not_measured')
+        with self.assertRaises(ValueError):
+            listening_report({'samples': [{'id': 'x', 'category': '重说', 'deletable': [{'id': 'a', 'start': 0, 'end': float('nan')}]}]},
+                             {'samples': [{'id': 'x', 'cuts': []}]})
+
+    def test_listening_example_fixture_runs_without_media(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp:
+            report_path = Path(temp) / 'listen.json'
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(['listen', '--gold', str(root / 'bench/listening-gold.example.json'),
+                      '--proposals', str(root / 'bench/listening-proposals.example.json'),
+                      '--report', str(report_path)])
+            report = json.loads(report_path.read_text(encoding='utf-8'))
+        self.assertEqual(report['quality']['status'], 'measured')
+        self.assertEqual(report['quality']['hit_rate'], 1)
+        self.assertEqual(report['quality']['false_cuts'], 0)
+        self.assertLessEqual(report['quality']['max_boundary_error_seconds'], .15)
+        self.assertEqual(report['performance']['status'], 'not_measured')
+        self.assertEqual(set(report['quality']['by_category']), {'音乐', '无音乐', '重说', '笑哭', '混语'})
 
     def test_invalid_intervals_fail_instead_of_corrupting_metrics(self):
         with self.assertRaises(ValueError):

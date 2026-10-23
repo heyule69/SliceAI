@@ -1,0 +1,12 @@
+{
+  "schema": "sliceai.listening-proposals.v1",
+  "example_fixture": true,
+  "instructions": "与 listening-gold.example.json 配对的合成提案，边界故意偏 40ms，用来检查命中率和边界误差。不是模型输出。",
+  "samples": [
+    {"id": "synth-music", "cuts": [{"id": "c1", "start": 2.04, "end": 3.16}]},
+    {"id": "synth-dry", "cuts": [{"id": "c1", "start": 5.04, "end": 6.36}]},
+    {"id": "synth-retake", "cuts": [{"id": "c1", "start": 1.04, "end": 1.36}]},
+    {"id": "synth-laughter", "cuts": [{"id": "c1", "start": 1.04, "end": 1.26}]},
+    {"id": "synth-mixed", "cuts": [{"id": "c1", "start": 8.04, "end": 8.41}]}
+  ]
+}

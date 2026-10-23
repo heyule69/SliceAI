@@ -63,6 +63,17 @@ class CandidatesTest(unittest.TestCase):
             self.assertEqual(reliable_words(row),[])
             self.assertTrue(all(c['status']=='blocked' for c in generate([row],self.options(),{'start':10.,'end':12.})))
 
+    def test_long_fresh_row_keeps_disagreement_on_the_old_sentence_span(self):
+        original=[{'id':0,'start':0.,'end':8.,'text':'猫去洗澡回来生病了'},
+                  {'id':1,'start':8.,'end':10.,'text':'完全不同的句子啊'},
+                  {'id':2,'start':10.,'end':18.,'text':'最后商家退钱了'}]
+        fresh=[{'id':0,'start':0.,'end':18.,'text':'猫去洗澡回来生病了最后商家退钱了'}]
+        rows,protected=reconcile_audio(original,fresh,separated=False)
+        self.assertEqual(protected,[])
+        self.assertEqual(rows[0]['caption_review_spans'],[{'start':8.,'end':10.}])
+        self.assertIn('caption_warning',rows[0])
+        self.assertNotIn('analysis_note',rows[0])
+
     def test_resegmented_same_audio_does_not_blanket_protect_story(self):
         original=[{'id':0,'start':0.,'end':6.,'text':'猫去洗澡回来生病了'}]
         fresh=[{'id':0,'start':.1,'end':2.,'text':'猫去洗澡'},
