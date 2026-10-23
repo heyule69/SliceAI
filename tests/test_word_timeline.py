@@ -82,6 +82,41 @@ class WordTimelineTest(unittest.TestCase):
         self.assertEqual(version['cut_ledger'][1]['kind'],'manual')
 
 
+class ReviewSpanTest(unittest.TestCase):
+    def test_disagreement_span_stops_flagging_neighbors_and_clears_after_the_cut(self):
+        from caption_timeline import update_review
+        text = '猫去洗澡回来商家把钱退了'
+        words = [{'id': f'0:{i}', 'text': ch, 'start': float(i), 'end': float(i) + 1,
+                  'timing_method': 'forced_alignment'} for i, ch in enumerate(text)]
+        plain = {'id': 0, 'start': 0., 'end': 12., 'text': text, 'alignment_complete': True,
+                 'words': words, 'caption_warning': '两次识别文字有分歧'}
+        narrowed = dict(plain, caption_review_spans=[{'start': 4., 'end': 6.}])
+        uncut = [{'start': 0., 'end': 12.}]
+        cut = [{'start': 0., 'end': 4.}, {'start': 6., 'end': 12.}]
+
+        def flag(row, ranges, regions):
+            version = {'ranges': ranges, 'cues': mapped_cues([row], ranges)}
+            update_review(version, regions, 'fixture')
+            return version
+
+        before_uncut = flag(plain, uncut, [{'start': 0., 'end': 12.}])
+        after_uncut = flag(narrowed, uncut, [{'start': 4., 'end': 6.}])
+        before_cut = flag(plain, cut, [{'start': 0., 'end': 12.}])
+        after_cut = flag(narrowed, cut, [{'start': 4., 'end': 6.}])
+        # Whole-row warning: 2 duration groups, both flagged. The cut removes the
+        # disagreed characters but the parent row still flags both retained cues.
+        self.assertEqual(len(before_uncut['cues']), 2)
+        self.assertEqual(before_uncut['caption_review']['needs_review'], [1, 2])
+        self.assertEqual(len(before_cut['cues']), 2)
+        self.assertEqual(before_cut['caption_review']['needs_review'], [1, 2])
+        flagged = [cue['text'] for cue in after_uncut['cues'] if cue['id'] in after_uncut['caption_review']['needs_review']]
+        self.assertEqual(flagged, ['回来'])
+        self.assertEqual(len(after_uncut['cues']), 3)
+        self.assertEqual(after_cut['caption_review']['needs_review'], [])
+        self.assertNotIn('回来', ''.join(cue['text'] for cue in after_cut['cues']))
+        self.assertEqual(''.join(cue['text'] for cue in after_cut['cues']), '猫去洗澡商家把钱退了')
+
+
 class RestoreEditorTest(unittest.TestCase):
     setUp = test_fine.FineTest.setUp
     tearDown = test_fine.FineTest.tearDown
@@ -142,6 +177,24 @@ class RestoreEditorTest(unittest.TestCase):
         self.assertNotIn('caption_boundary_pending',version)
         self.assertEqual(version['subtitle_rows'][-1]['text'],edited['text'])
         self.assertTrue(version['subtitle_rows'][-1]['user_edited'])
+
+    def test_refresh_does_not_relisten_or_reflag_words_outside_the_span(self):
+        from caption_timeline import refresh_boundaries
+        editor = Editor(self.store, {'project_id': self.p['id']})
+        text = '猫去洗澡回来商家把钱退了'
+        row = {'id': 0, 'start': 0., 'end': 12., 'text': text, 'alignment_complete': True,
+               'caption_warning': '两次识别文字有分歧，需要听辨；不据此禁止整句剪辑',
+               'caption_review_spans': [{'start': 4., 'end': 6.}],
+               'words': [{'id': f'0:{i}', 'text': ch, 'start': float(i), 'end': float(i) + 1,
+                          'timing_method': 'forced_alignment'} for i, ch in enumerate(text)]}
+        version = editor.version([{'start': 0, 'end': 4}, {'start': 6, 'end': 12}], '剪掉分歧字')
+        version['subtitle_rows'] = [row]
+        version['transcript_rows'] = [row]
+        with patch('fine_auto.checked_captions', side_effect=AssertionError('已对齐且未切到字的切口不应整段重听')):
+            refresh_boundaries(editor, version)
+        self.assertEqual(version['caption_review']['needs_review'], [])
+        self.assertEqual(''.join(cue['text'] for cue in version['cues']), '猫去洗澡商家把钱退了')
+        self.assertNotIn('caption_boundary_pending', version)
 
 
 if __name__ == '__main__':

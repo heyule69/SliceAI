@@ -78,10 +78,42 @@ def mark_partial_groups(rows, ranges):
     return [dict(row, boundary_uncertain=True) if row.get('edit_group') in incomplete else row for row in rows]
 
 
+def row_review_spans(row):
+    """Source intervals that still need a listen, not the whole VAD row.
+
+    original_fallback has no fresh words to narrow. Explicit
+    caption_review_spans win over a row-level caption_warning so a cut that
+    removes only the disagreed words does not keep the retained neighbors flagged.
+    """
+    if row.get('original_fallback'):
+        return [{'start': row['start'], 'end': row['end']}]
+    spans = row.get('caption_review_spans')
+    if isinstance(spans, list) and spans:
+        regions = []
+        for span in spans:
+            if not isinstance(span, dict):
+                continue
+            start, end = span.get('start'), span.get('end')
+            if type(start) in (int, float) and type(end) in (int, float) and end - start > EPSILON:
+                regions.append({'start': start, 'end': end})
+        if regions:
+            return regions
+    if row.get('caption_warning') or row.get('analysis_note'):
+        return [{'start': row['start'], 'end': row['end']}]
+    return []
+
+
+def warning_regions(rows):
+    regions = []
+    for row in rows:
+        regions.extend(row_review_spans(row))
+    return merged_regions(regions)
+
+
 def review_regions(version):
     regions = list(version.get('caption_review_regions', []))
-    regions.extend(row for row in version.get('subtitle_rows',version.get('transcript_rows',[]))
-                   if row.get('original_fallback') or row.get('analysis_note') or row.get('caption_warning'))
+    for row in version.get('subtitle_rows', version.get('transcript_rows', [])):
+        regions.extend(row_review_spans(row))
     uncertain = set(version.get('caption_review', {}).get('needs_review', []))
     if uncertain:
         regions.extend(source_rows([cue for cue in version['cues'] if cue['id'] in uncertain], version['ranges']))
@@ -147,8 +179,13 @@ def refresh_boundaries(editor, version):
     for target in merged:
         editor.persist('重新核对剪切点字幕')
         fresh = checked_captions(editor, audio, clip=target)
-        if any(intersects(row, target) and (row.get('original_fallback') or row.get('analysis_note') or row.get('caption_warning')) for row in rows):
-            warnings.append(target)
+        for row in rows:
+            for span in row_review_spans(row):
+                if not intersects(span, target):
+                    continue
+                piece = {'start': max(span['start'], target['start']), 'end': min(span['end'], target['end'])}
+                if piece['end'] - piece['start'] > EPSILON:
+                    warnings.append(piece)
         replacement.extend(fresh)
     if merged:
         version['subtitle_rows'] = overlay_rows(rows, replacement + preserved, merged + preserved)

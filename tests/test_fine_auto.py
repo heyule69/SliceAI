@@ -103,6 +103,27 @@ class AutoTest(unittest.TestCase):
         self.assertFalse(self.p['error']);self.assertEqual(api.call_count,3);render.assert_called_once()
         self.assertEqual(self.p['versions'][-1]['audio_strength'],1);self.assertIsNone(self.p['audio_sample'])
 
+    def test_long_row_disagreement_flags_only_the_overlapping_words(self):
+        from caption_timeline import update_review
+        original=[{'id':0,'start':0.,'end':4.,'text':'猫去洗澡回来'},
+                  {'id':1,'start':4.,'end':6.,'text':'听不清的句子'},
+                  {'id':2,'start':6.,'end':12.,'text':'商家把钱退了'}]
+        text='猫去洗澡回来商家把钱退了'
+        fresh=[{'id':0,'start':0.,'end':12.,'text':text,'alignment_complete':True,
+                'words':[{'id':f'0:{i}','text':ch,'start':float(i),'end':float(i)+1,
+                          'timing_method':'forced_alignment'} for i,ch in enumerate(text)]}]
+        (self.store.task_dir(self.task['id'])/'transcript.json').write_text(json.dumps(original,ensure_ascii=False),encoding='utf-8')
+        with patch('fine_auto.checked_captions',return_value=fresh),patch.object(Editor,'render'),\
+                patch('fine_auto.chat_api',side_effect=lambda settings,messages,*a:grounded_response(messages)):
+            self.run_cmd('edit_auto',options=self.options(cleanup=[],speech=[],subtitles='checked'))
+        version=self.p['versions'][-1]
+        flagged=[cue['text'] for cue in version['cues'] if cue['id'] in version['caption_review']['needs_review']]
+        self.assertEqual(flagged,['回来'])
+        legacy={'ranges':version['ranges'],'cues':version['cues']}
+        update_review(legacy,[{'start':0.,'end':12.}],'whole-row')
+        self.assertEqual(len(legacy['caption_review']['needs_review']),len(version['cues']))
+        self.assertGreater(len(legacy['caption_review']['needs_review']),len(flagged))
+
     def test_subtitle_audio_disagreement_is_flagged(self):
         fresh=copy.deepcopy(self.rows);fresh[0]['text']='重新听到的不同内容'
         with patch('fine_auto.chat_api',side_effect=lambda settings,messages,*a:grounded_response(messages)),patch('fine_auto.checked_captions',return_value=fresh):

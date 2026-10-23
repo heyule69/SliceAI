@@ -197,12 +197,18 @@ def reconcile_audio(original, fresh, separated=True):
         matched=sum(block.size for block in matcher.get_matching_blocks())
         agrees=bool(old_text) and (old_text in new_text or matched/max(1,len(old_text))>=.85)
         if not agrees:
+            # The disagreed *source sentence* is the review span. A long fresh
+            # VAD row may also contain text that matched its neighbors; those
+            # words must not inherit 待核对 after the cut is remapped.
+            span={'start':old['start'],'end':old['end']}
             if separated:
-                protected.append({'start':old['start'],'end':old['end'],
-                                  'reason':'处理后可能遗漏原声内容，保留对应局部声音'})
+                protected.append({**span,'reason':'处理后可能遗漏原声内容，保留对应局部声音'})
             for row in rows:
                 if max(row['start'],old['start'])<min(row['end'],old['end']):
                     row['caption_warning']='两次识别文字有分歧，需要听辨；不据此禁止整句剪辑'
+                    spans=row.setdefault('caption_review_spans',[])
+                    if not any(abs(item['start']-span['start'])<=.002 and abs(item['end']-span['end'])<=.002 for item in spans):
+                        spans.append(dict(span))
             if not matches:rows.append(dict(old,original_fallback=True,
                 caption_warning='本次未识别到对应原声，保留旧字幕并待听辨'))
         if re.fullmatch(r'(哈{2,}|呵{2,}|呜{2,}|嘿{2,})',normalize(old['text'])):
@@ -356,9 +362,9 @@ def run(editor):
     version['cues']=mapped_cues(caption_rows,ranges)
     # Recognition disagreements stay visible as caption-review regions, rather
     # than making every coarse/fine segmentation mismatch veto deletion.
-    warning_regions=[row for row in caption_rows if row.get('caption_warning') or row.get('original_fallback')]
-    warning_regions.extend(audio_protection)
-    from caption_timeline import update_review
-    update_review(version,warning_regions,'processed_audio_with_original_comparison' if audio else 'local_audio_retranscription')
+    from caption_timeline import update_review, warning_regions as caption_warning_regions
+    regions=caption_warning_regions(caption_rows)
+    regions.extend(audio_protection)
+    update_review(version,regions,'processed_audio_with_original_comparison' if audio else 'local_audio_retranscription')
     if options['music']=='reduce':version.update(audio_strength=1,audio_engine=ENGINE_ID)
     editor.persist('按所选要求生成预览');editor.render()
