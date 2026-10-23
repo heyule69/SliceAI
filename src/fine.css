@@ -16,6 +16,10 @@
 .fine-cut-summary strong{font-size:12px;font-weight:600;line-height:1.7}.fine-cut-summary.unchanged{border-color:#ead6b2;background:#fff9ed;color:#805719}
 .fine-cut-counts{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:5px;font-size:11px;font-variant-numeric:tabular-nums;color:#536274}
 .fine-cut-summary p{font-size:11px;line-height:1.7;margin:7px 0 0;overflow-wrap:anywhere;color:inherit}
+.fine-block-reasons{margin:8px 0 0;padding:0;list-style:none}.fine-block-reasons li{font-size:11px;line-height:1.6;margin:2px 0}
+.fine-alignment-note{font-size:11px;line-height:1.7}
+.fine-cache-note{font-size:11px;line-height:1.7;margin:8px 0;padding:8px 10px;border-radius:4px;background:#f4f7fb;color:#526074}
+.fine-cache-note.over-budget{background:#fff6e8;color:#7a5a22}
 .question-result .fine-cut-summary{margin-top:14px}.question-result .fine-cut-counts{gap:4px 10px}
 .fine-retained{margin-top:12px;border-top:1px solid var(--line);padding-top:10px;font-size:12px}.fine-retained summary{cursor:pointer;color:#59697f}
 .fine-cut-ledger .fine-cut-note{font-size:10px;color:#667286;margin:9px 0}

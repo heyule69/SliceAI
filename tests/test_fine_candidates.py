@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'backend'))
 from fine_auto import DEFAULTS, reconcile_audio, intervals_after_deletions
-from fine_candidates import generate, validate_decisions, reliable_words, merge_removed, execution_summary, timed_streams
+from fine_candidates import generate, validate_decisions, reliable_words, merge_removed, execution_summary, timed_streams, block_reason_counts
 from fine_gaps import characterize
 from fine_story import final_review
 
@@ -20,6 +20,15 @@ class CandidatesTest(unittest.TestCase):
 
     def options(self,**values):
         return {**DEFAULTS,'cleanup':[],'speech':['retakes'],**values}
+
+    def test_alignment_warning_is_the_visible_block_reason(self):
+        warning = '缺少字词对齐环境：未找到 /opt/sliceai/.alignment-venv/bin/python。句内删除保持待确认。'
+        row = {'id': 7, 'start': 10., 'end': 12., 'text': '就就是这样',
+               'alignment': {'status': 'unavailable', 'warning': warning}}
+        proposals = generate([row], self.options(), {'start': 10., 'end': 12.})
+        self.assertEqual(proposals[0]['status'], 'blocked')
+        self.assertIn('/opt/sliceai/.alignment-venv/bin/python', proposals[0]['block_reason'])
+        self.assertEqual(block_reason_counts(proposals), [{'reason': warning, 'count': 1}])
 
     def test_token_emission_cannot_cut_word_or_generate_fake_end(self):
         row={'id':7,'start':10.,'end':12.,'text':'就就是这样',

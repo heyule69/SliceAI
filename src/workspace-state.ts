@@ -61,6 +61,7 @@ export class SubtitleDrafts {
 }
 
 export type QueueEntry = { id: number; cmd: string; task_id?: string; project_id?: string; status: 'queued' | 'running'; position: number };
+export const QUEUE_POLICY = '转写、来源复核、细剪、声音处理和导出共用一条队列，同时只运行一项重任务。';
 export function globalActivity(tasks: { status: string }[], edits: { status?: string }[], queue: QueueEntry[]) {
   const taskCount = tasks.filter(t => ['queued','probing','transcribing','analyzing','rendering','exporting','cancelling'].includes(t.status)).length;
   const editCount = edits.filter(p => ['busy','queued'].includes(p.status || '')).length;
@@ -70,5 +71,15 @@ export function globalActivity(tasks: { status: string }[], edits: { status?: st
   if (taskCount) parts.push(`${taskCount} 个切片任务`);
   if (editCount) parts.push(`${editCount} 个细剪任务`);
   if (waiting) parts.push(`${waiting} 项排队`);
-  return parts.length ? parts.join(' · ') : running ? '正在处理' : '就绪';
+  const headline = parts.length ? parts.join(' · ') : running ? '正在处理' : '';
+  return headline ? `${headline} · 一次一项重任务` : '就绪';
+}
+
+export type ReviewSummary = { checked?: number; excluded?: number; held?: number; unreviewed?: number; failed?: number; failure_reason?: string };
+export function reviewFailureNote(summary?: ReviewSummary) {
+  const failed = summary?.failed || 0;
+  const reason = (summary?.failure_reason || '').trim();
+  if (!failed && !reason) return '';
+  const count = failed ? `来源复核失败 ${failed} 段，这些片段没有导出。` : '来源复核没有完成，未核实的片段没有导出。';
+  return reason ? `${count}${reason}` : count;
 }

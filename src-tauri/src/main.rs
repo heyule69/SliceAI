@@ -97,7 +97,31 @@ fn grant_assets(app: &tauri::AppHandle, value: &Value) {
     }
 }
 
+fn worker_launch_error(runtime: &Runtime) -> Option<String> {
+    if !runtime.worker.is_file() {
+        let message = if cfg!(debug_assertions) {
+            format!(
+                "缺少主工作进程环境：未找到 {}。开发调试需要仓库根目录的 .venv（Windows 为 .venv/Scripts/python.exe，其他系统为 .venv/bin/python），并安装 backend/requirements.txt。",
+                runtime.worker.display()
+            )
+        } else {
+            format!(
+                "缺少主工作进程：未找到 {}。请使用带 worker/sliceai-worker.exe 的完整安装包，不要单独拷贝主程序。",
+                runtime.worker.display()
+            )
+        };
+        return Some(message);
+    }
+    if let Some(script) = &runtime.script {
+        if !script.is_file() {
+            return Some(format!("缺少后端入口：未找到 {}。", script.display()));
+        }
+    }
+    None
+}
+
 fn worker_call(app: &tauri::AppHandle, runtime: &Runtime, mut request: Value) -> Result<Value, String> {
+    if let Some(message) = worker_launch_error(runtime) { return Err(message); }
     let heavy = ["preview_compatible", "run", "export", "recheck", "delete_task", "edit_auto", "edit_chat", "edit_confirm", "edit_preview", "edit_export", "edit_audio_sample", "edit_source_preview"];
     let _work_guard = if heavy.contains(&request["cmd"].as_str().unwrap_or("")) { Some(runtime.work_lock.lock().map_err(|_| "处理队列异常，请重新打开程序。")?) } else { None };
     request["_data_dir"] = json!(runtime.data.to_string_lossy());
@@ -220,8 +244,9 @@ fn main() {
             }
             let (sender, receiver) = mpsc::channel::<(u64, Value)>();
             let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
+            let python = if cfg!(windows) { root.join(".venv/Scripts/python.exe") } else { root.join(".venv/bin/python") };
             let (worker, script) = if cfg!(debug_assertions) {
-                (root.join(".venv/Scripts/python.exe"), Some(root.join("backend/service.py")))
+                (python, Some(root.join("backend/service.py")))
             } else { (app.path().resource_dir()?.join("worker/sliceai-worker.exe"), None) };
             let runtime = Arc::new(Runtime { data, worker, script, sender, queue: Mutex::new(Vec::new()), queue_revision: AtomicU64::new(0), next_job: AtomicU64::new(1), work_lock: Mutex::new(()), window_size: Mutex::new(window_size),
                 #[cfg(windows)] job: create_job().map_err(std::io::Error::other)?,

@@ -9,19 +9,6 @@ from pathlib import Path
 
 CACHE_LIMIT_BYTES = 16 * 1024 ** 3
 SPACE_RESERVE_BYTES = 256 * 1024 ** 2
-SOFT_BUDGET_NOTE = (
-    '这是软预算，不是磁盘配额。版本、试听和已保存成片引用的文件会保留，'
-    '所以缓存可以超过预算；超过时只清理没有被引用的处理音频。'
-)
-
-
-def budget_message(cache_bytes, limit_bytes):
-    """User-facing note when protected files keep the cache above its soft budget."""
-    if cache_bytes <= limit_bytes:
-        return ''
-    gib = 1024 ** 3
-    return (f'声音缓存约 {cache_bytes / gib:.2f} GiB，已经超过 {limit_bytes / gib:.2f} GiB 软预算。'
-            + SOFT_BUDGET_NOTE)
 
 
 def canonical(value):
@@ -239,16 +226,42 @@ def ensure_space(editor, folder, seconds, *, raw_ready=False, stem_ready=False,
         if not failed:
             manifest.unlink(missing_ok=True)
         free = shutil.disk_usage(folder).free
+    protected_paths = [path for path in all_files if path in protected]
+    protected_bytes = sum(all_files[path] for path in protected_paths)
     cache_bytes = max(0, total)
+    over_budget = cache_bytes > limit_bytes
     editor.p['audio_storage'] = {'seconds': seconds, 'estimated_additional_bytes': needed,
                                'free_bytes': free, 'cache_bytes': cache_bytes,
                                'cache_limit_bytes': limit_bytes, 'removed_bytes': removed,
                                'soft_budget': True,
-                               'over_soft_budget': cache_bytes > limit_bytes,
-                               'message': budget_message(cache_bytes, limit_bytes)}
+                               'over_budget': over_budget, 'over_soft_budget': over_budget,
+                               'protected_bytes': protected_bytes,
+                               'protected_files': len(protected_paths),
+                               'message': _budget_message(cache_bytes, limit_bytes, protected_bytes,
+                                                          len(protected_paths), removed)}
     if free < needed + reserve:
         gb = 1024 ** 3
+        protected_note = ''
+        if over_budget and protected_bytes:
+            protected_note = (f' 声音缓存约 {cache_bytes/gb:.2f} GiB，已超过 {limit_bytes/gb:.2f} GiB 软预算；'
+                              f'{len(protected_paths)} 个受保护文件已保留，没有删除。')
         raise ValueError(f'声音处理空间不足：预计另需 {needed/gb:.2f} GB，当前可用 {free/gb:.2f} GB。'
                          '请释放磁盘空间或缩短事件后重试。已保存成片和被引用的音频都保留。'
-                         '16 GiB 只是声音缓存的软预算，不能代替磁盘剩余空间。')
+                         '16 GiB 只是声音缓存的软预算，不能代替磁盘剩余空间。' + protected_note)
     return editor.p['audio_storage']
+
+
+def _budget_message(total, limit_bytes, protected_bytes, protected_files, removed):
+    gb = 1024 ** 3
+    if total > limit_bytes and protected_bytes:
+        return (f'声音缓存约 {total/gb:.2f} GiB，已经超过 {limit_bytes/gb:.2f} GiB 软预算。'
+                f'{protected_files} 个受保护文件约 {protected_bytes/gb:.2f} GiB'
+                '（版本、试听或成片引用）已保留，没有删除。'
+                '这是软预算，不是磁盘配额。超过时只清理没有被引用的处理音频。')
+    if total > limit_bytes:
+        return (f'声音缓存约 {total/gb:.2f} GiB，已经超过 {limit_bytes/gb:.2f} GiB 软预算。'
+                '没有可安全清理的未引用缓存。'
+                '这是软预算，不是磁盘配额。超过时只清理没有被引用的处理音频。')
+    if removed:
+        return f'已按软预算清理未被引用的声音缓存，释放约 {removed/gb:.2f} GB。'
+    return ''

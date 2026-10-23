@@ -46,7 +46,7 @@ python -X utf8 -m unittest discover -s scripts -p test_model_assets.py -v
 
 ## 开发与完整构建
 
-建议 Windows x64、Python 3.11、Node 22（至少 22.12）、Rust MSVC 和 Visual Studio C++ Build Tools。Python 依赖按 `backend/requirements*.txt` 的固定版本安装，前端用 `npm ci` 按 lockfile 安装。ASR 与声音依赖使用独立 venv；准备标准库脚本也可先在系统 Python 3.11+ 中运行。
+建议 Windows x64、Python 3.11、Node 22（至少 22.12）、Rust MSVC 和 Visual Studio C++ Build Tools。Windows x64 是正式产品，安装包只做 NSIS；Linux / macOS 没有发行包。调试构建在 Windows 使用 `.venv/Scripts/python.exe`，在其他系统使用 `.venv/bin/python`；声音环境 `.audio-venv` 和字词对齐环境 `.alignment-venv` 同样按系统选择 `Scripts` 或 `bin`。缺文件时启动或处理错误会写出具体路径。Python 依赖按 `backend/requirements*.txt` 的固定版本安装，前端用 `npm ci` 按 lockfile 安装。ASR 与声音依赖使用独立 venv；准备标准库脚本也可先在系统 Python 3.11+ 中运行。
 
 ```powershell
 python -m venv .venv

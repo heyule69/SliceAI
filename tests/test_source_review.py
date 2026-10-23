@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'backend'))
-from source_review import validate_review,review_clip
+from source_review import failure_review,validate_review,review_clip
 from pipeline import Runner
 from storage import Store
 from engine import Cancelled
@@ -95,6 +95,41 @@ class SourceReviewTest(unittest.TestCase):
                     review_clip(runner,self.clip,self.rows);self.assertEqual(api.call_count,4)
                     runner.task['audio_track']=1
                     review_clip(runner,self.clip,self.rows);self.assertEqual(api.call_count,5)
+            finally:store.db.close()
+
+    def test_vision_failure_keeps_passed_clips_and_names_the_reason(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store,runner=self.make_runner(Path(temp))
+            try:
+                other={**self.clip,'id':2,'start':200,'end':260,'score':40,'title':'后面的候选'}
+                with patch('pipeline.review_clip',side_effect=[{'decision':'keep','reason':'主播聊天'},ValueError('API HTTP 400：模型不支持图片')]),contextlib.redirect_stdout(io.StringIO()):
+                    kept=runner.select_sources([self.clip,other],self.rows,2)
+                self.assertEqual([c['id'] for c in kept],[1])
+                summary=runner.task['source_review_summary']
+                self.assertEqual(summary['failed'],1)
+                self.assertEqual(summary['unreviewed'],0)
+                self.assertIn('未导出',summary['failure_reason'])
+                self.assertIn('图片',summary['failure_reason'])
+                failed=runner.task['rejected_clips'][0]
+                self.assertEqual(failed['id'],2)
+                self.assertEqual(failed['source_review']['decision'],'failed')
+                self.assertEqual(failed['source_review']['failure'],'vision_api')
+                self.assertIn(failed['source_review']['reason'],summary['failure_reason'])
+            finally:store.db.close()
+
+    def test_export_records_vision_failure_instead_of_dropping_the_clip(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store,runner=self.make_runner(Path(temp))
+            try:
+                with patch('pipeline.review_clip',side_effect=ValueError('API 没有返回文本内容')),patch.object(runner,'render_clip') as render,contextlib.redirect_stdout(io.StringIO()):
+                    runner.export([1],'separate')
+                    render.assert_not_called()
+                self.assertEqual(runner.task['status'],'failed')
+                self.assertIn('未导出',runner.task['error'])
+                self.assertIn('文本内容',runner.task['error'])
+                self.assertEqual(runner.task['clips'][0]['source_review']['failure'],'vision_api')
+                self.assertEqual(runner.task['source_review_summary']['failed'],1)
+                self.assertEqual(failure_review(ValueError('抽帧失败'))['failure'],'frames')
             finally:store.db.close()
 
     def test_failed_frame_is_not_sent_and_rejected_clip_gets_stable_id_on_recheck(self):

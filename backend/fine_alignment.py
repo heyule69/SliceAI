@@ -5,10 +5,9 @@ import hashlib
 import json
 import math
 import re
-import sys
 import unicodedata
 from pathlib import Path
-from engine import Cancelled, check_cancel, command, resource_dir, tool_path
+from engine import Cancelled, check_cancel, command, tool_path
 from word_timeline import ALIGNMENT_PADDING
 
 ENGINE = 'qwen3-forced-aligner-cpu-v1'
@@ -22,12 +21,43 @@ def normalized(text):
 
 
 def locations():
-    if getattr(sys, 'frozen', False):
-        folder = resource_dir() / 'alignment'
-        return [str(folder / 'sliceai-alignment.exe')], folder / 'model'
-    root = Path(__file__).resolve().parents[1]
-    python = root / '.alignment-venv' / ('Scripts/python.exe' if sys.platform == 'win32' else 'bin/python')
-    return [str(python), str(root / 'backend/alignment_worker.py')], root / 'alignment-model/Qwen3-ForcedAligner-0.6B'
+    from runtime_check import alignment_locations
+    return alignment_locations()
+
+
+def summarize(rows):
+    """Count alignment windows and the distinct warnings a person should see."""
+    counts = {'complete': 0, 'unavailable': 0, 'failed': 0, 'invalid': 0, 'unsupported': 0, 'pending': 0}
+    warnings = []
+    seen = set()
+    windows = 0
+
+    def note(alignment):
+        nonlocal windows
+        if not isinstance(alignment, dict):
+            return
+        status = alignment.get('status')
+        if not isinstance(status, str) or not status:
+            return
+        windows += 1
+        if status in counts:
+            counts[status] += 1
+        else:
+            counts['failed'] += 1
+        warning = alignment.get('warning')
+        if isinstance(warning, str) and warning.strip() and warning not in seen:
+            seen.add(warning)
+            warnings.append(warning.strip()[:200])
+
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        note(row.get('alignment'))
+        for window in row.get('word_windows') or []:
+            if isinstance(window, dict):
+                note(window.get('alignment'))
+    problems = counts['unavailable'] + counts['failed'] + counts['invalid'] + counts['unsupported'] + counts['pending']
+    return {'windows': windows, **counts, 'problem_windows': problems, 'warnings': warnings[:6]}
 
 
 def model_identity(model):
@@ -163,9 +193,15 @@ def prepare(editor, rows, row_ids=None, audio=None):
         model_key = model_identity(model)
         if not Path(prefix[0]).is_file():
             raise ValueError('未安装独立精对齐运行组件。')
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        from runtime_check import component_gap
+        gap = component_gap(prefix, model, '字词对齐')
+        warning = gap or f'精对齐组件未准备（{str(exc)[:160]}）'
+        if not warning.endswith('。'):
+            warning += '。'
+        warning += '句内删除保持待确认。'
         for row in selected:
-            row['alignment'].update(status='unavailable', warning='精对齐组件未准备，句内删除保持待确认。')
+            row['alignment'].update(status='unavailable', warning=warning)
         return result
     source, source_key = source_identity(editor, audio)
     origin = float(audio.get('identity', {}).get('start', editor.clip['start'])) if audio else 0

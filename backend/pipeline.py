@@ -10,7 +10,7 @@ from pathlib import Path
 from engine import (Cancelled,chat_api,check_cancel,command,decode_json,emit,probe,thumbnail,tool_path,resource_dir)
 from formats import (chat_context,clip_cues,deduplicate,parse_chat,parse_subtitles,read_utf8,
                      transcript_windows,validate_candidates,write_srt)
-from source_review import review_clip, VERSION as REVIEW_VERSION
+from source_review import failure_review, review_clip, VERSION as REVIEW_VERSION
 
 ACTIVE={'queued','probing','transcribing','analyzing','rendering','exporting','cancelling'}
 
@@ -152,6 +152,11 @@ class Runner:
                     pass
                 self.task['clips'].append(candidate)
             self.update('rendering',f'找到 {len(candidates)} 个精彩片段',78)
+            review=self.task.get('source_review_summary') or {}
+            if review.get('failed'):
+                self.task['error']=review.get('failure_reason') or '画面来源复核失败，未导出未核实片段。'
+                self.update('failed',f'来源复核失败 {review["failed"]} 段，未导出未核实片段')
+                return self.task
             if candidates and self.task['prefs']['auto_export']:
                 self.export([c['id'] for c in candidates],self.task['prefs']['output'],'none',sentences,automatic=True)
             self.update('complete','处理完成' if candidates else '未找到符合偏好的精彩片段，可调整偏好后重新分析',100)
@@ -167,16 +172,26 @@ class Runner:
             return sorted(candidates,key=lambda c:c['score'],reverse=True) if self.task['prefs'].get('event_mode') else deduplicate(candidates,limit)
         ranked=sorted(candidates,key=lambda c:c['score'],reverse=True)
         budget=min(len(ranked),max(limit,min(100,limit*3)))
-        kept=[];rejected=[]
+        kept=[];rejected=[];failure=None
         for i,candidate in enumerate(ranked[:budget]):
-            if len(kept)>=limit:break
+            if len(kept)>=limit or failure:break
             self.update('analyzing',f'复核画面与发言来源 · {i+1}/{budget}',74+3*i/max(1,budget))
-            candidate['source_review']=review_clip(self,candidate,sentences)
+            try:
+                candidate['source_review']=review_clip(self,candidate,sentences)
+            except Cancelled:
+                raise
+            except Exception as exc:
+                candidate['source_review']=failure_review(exc)
+                failure=candidate['source_review']
+                rejected.append(candidate)
+                break
             (kept if candidate['source_review']['decision']=='keep' else rejected).append(candidate)
         self.task['rejected_clips']=rejected
         self.task['source_review_summary']={'version':REVIEW_VERSION,'checked':len(kept)+len(rejected),
             'excluded':sum(c['source_review']['decision']=='exclude' for c in rejected),
             'held':sum(c['source_review']['decision']=='hold' for c in rejected),
+            'failed':sum(c['source_review'].get('decision')=='failed' for c in rejected),
+            'failure_reason':failure['reason'] if failure else '',
             'unreviewed':len(ranked)-len(kept)-len(rejected)}
         return sorted(kept,key=lambda c:-c['score'] if self.task['prefs'].get('event_mode') else c['start'])
 
@@ -201,7 +216,13 @@ class Runner:
             kept=self.select_sources(candidates,sentences,len(candidates))
             self.task['clips']=kept
             self.mark_previous_exports()
-            self.update('complete',f'来源复核完成，保留 {len(kept)} 个片段；历史导出文件未改动',100)
+            review=self.task.get('source_review_summary') or {}
+            if review.get('failed'):
+                self.task['error']=review.get('failure_reason') or '画面来源复核失败，未导出未核实片段。'
+                self.update('failed',f'来源复核失败 {review["failed"]} 段，未导出未核实片段；已保留通过复核的 {len(kept)} 段')
+            else:
+                self.task['error']=''
+                self.update('complete',f'来源复核完成，保留 {len(kept)} 个片段；历史导出文件未改动',100)
         except Cancelled:
             self.update('cancelled','来源复核已取消，未完成的结果不用于导出')
         except Exception as exc:
@@ -334,7 +355,16 @@ class Runner:
                 allowed=[]
                 for i,clip in enumerate(chosen):
                     self.update('analyzing',f'导出前核对来源 · {i+1}/{len(chosen)}',78 if automatic else 0)
-                    clip['source_review']=review_clip(self,clip,sentences)
+                    try:
+                        clip['source_review']=review_clip(self,clip,sentences)
+                    except Cancelled:
+                        raise
+                    except Exception as exc:
+                        clip['source_review']=failure_review(exc)
+                        self.task['source_review_summary']={'version':REVIEW_VERSION,'checked':i+1,
+                            'excluded':0,'held':0,'failed':1,'failure_reason':clip['source_review']['reason'],
+                            'unreviewed':len(chosen)-i-1}
+                        raise ValueError(clip['source_review']['reason']) from exc
                     if clip['source_review']['decision']=='keep':allowed.append(clip)
                     else:
                         rejected=self.task.setdefault('rejected_clips',[])

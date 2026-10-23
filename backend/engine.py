@@ -41,9 +41,13 @@ def kill_tree(proc):
 def command(args, store, task_id=None, on_line=None, timeout=None, cwd=None):
     """Drain output concurrently; cancellation terminates FFmpeg/ASR descendants too."""
     check_cancel(store,task_id)
-    proc=subprocess.Popen([str(a) for a in args],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
-                          stdin=subprocess.DEVNULL,creationflags=CREATE_FLAGS,cwd=cwd,
-                          env={**os.environ,'PYTHONIOENCODING':'utf-8','PYTHONUTF8':'1'})
+    try:
+        proc=subprocess.Popen([str(a) for a in args],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
+                              stdin=subprocess.DEVNULL,creationflags=CREATE_FLAGS,cwd=cwd,
+                              env={**os.environ,'PYTHONIOENCODING':'utf-8','PYTHONUTF8':'1'})
+    except FileNotFoundError:
+        program=str(args[0]) if args else '外部程序'
+        raise ValueError(f'无法启动「{Path(program).name}」：找不到 {program}。请确认对应的虚拟环境或工作进程已安装。') from None
     lines=queue.Queue(maxsize=200)
     def reader():
         try:
