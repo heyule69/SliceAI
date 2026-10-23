@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from asr import result_row, shift_row_timing
 from engine import Cancelled
-from fine_alignment import checked_words, local_windows, prepare
+from fine_alignment import checked_words, local_windows, prepare, summarize
 from fine_candidates import generate, reliable_words
 from word_timeline import ALIGNMENT_PADDING, cuts_word
 
@@ -209,10 +209,25 @@ class PrepareTest(unittest.TestCase):
         self.assertEqual(rows[0]['words'], [])
         self.assertFalse(rows[0]['alignment_complete'])
         self.assertEqual(rows[0]['alignment']['status'], 'unavailable')
+        self.assertIn('missing', rows[0]['alignment']['warning'])
+        self.assertIn('句内删除保持待确认', rows[0]['alignment']['warning'])
         with self.patches(), patch('fine_alignment.command', side_effect=Cancelled()):
             with self.assertRaises(Cancelled):
                 prepare(self.editor, self.rows)
         self.assertFalse(list((self.root/'alignment-cache').glob('*.partial*')))
+
+    def test_summary_counts_failed_windows_and_keeps_distinct_warnings(self):
+        rows = [{'alignment': {'status': 'failed', 'warning': '当前可用内存不足，句内删除保持待确认。'}},
+                {'alignment': {'status': 'complete'}, 'word_windows': [
+                    {'alignment': {'status': 'invalid', 'warning': '字词对齐不完整或边界异常，保留对应内容。'}},
+                    {'alignment': {'status': 'invalid', 'warning': '字词对齐不完整或边界异常，保留对应内容。'}}]}]
+        summary = summarize(rows)
+        self.assertEqual(summary['windows'], 4)
+        self.assertEqual(summary['complete'], 1)
+        self.assertEqual(summary['failed'], 1)
+        self.assertEqual(summary['invalid'], 2)
+        self.assertEqual(summary['problem_windows'], 3)
+        self.assertEqual(summary['warnings'], ['当前可用内存不足，句内删除保持待确认。', '字词对齐不完整或边界异常，保留对应内容。'])
 
 
 if __name__ == '__main__':

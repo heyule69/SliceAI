@@ -2,20 +2,16 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import sys
 from pathlib import Path
-from engine import check_cancel,command,resource_dir,tool_path
+from engine import check_cancel,command,tool_path
 from audio_identity import ENGINE_ID
 from audio_cache import canonical, checked_folder, ensure_space, record_cache
 from media_audio import TIMELINE_VERSION, aligned_audio_args, audio_track, probe_audio
 
 
 def locations():
-    if getattr(sys,'frozen',False):
-        root=resource_dir()/'audio'
-        return [str(root/'sliceai-audio.exe')],root/'model'
-    root=Path(__file__).resolve().parents[1]
-    return [str(root/'.audio-venv/Scripts/python.exe'),str(root/'backend/audio_worker.py')],root/'audio-model/BandItPlus'
+    from runtime_check import audio_locations
+    return audio_locations()
 
 
 def ready():
@@ -63,7 +59,10 @@ def source_identity(editor, source, start=None, duration=None):
 
 def process_audio(editor,source,folder,strength,start=None,duration=None):
     prefix,model=locations()
-    if not ready():raise ValueError('声音组件不完整，请安装包含声音模型的完整版本。')
+    if not ready():
+        from runtime_check import component_gap
+        raise ValueError(component_gap(prefix, model, '声音处理')
+                         or '声音组件不完整，请安装包含声音模型的完整版本。')
     strength=float(strength)
     if not math.isfinite(strength) or not 0<=strength<=1:raise ValueError('声音强度无效。')
     source=Path(source).resolve();folder=checked_folder(editor,folder);folder.mkdir(parents=True,exist_ok=True)

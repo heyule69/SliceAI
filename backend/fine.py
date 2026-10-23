@@ -324,8 +324,18 @@ class Editor:
             from source_review import review_clip
             clip=next((c for c in self.task['clips'] if c['id']==self.p['clip_id']),None)
             if not clip:raise ValueError('原事件已被来源复核过滤，暂不生成成片。')
-            result=review_clip(self.runner,clip,self.sentences)
-            if result['decision']!='keep':raise ValueError(result['reason'])
+            try:
+                result=review_clip(self.runner,clip,self.sentences)
+            except Cancelled:
+                raise
+            except Exception as exc:
+                from source_review import failure_review
+                raise ValueError(failure_review(exc)['reason']) from exc
+            if result['decision']!='keep':
+                reason=result.get('reason') or '没有可核对的画面或发言证据。'
+                if result.get('decision')=='failed' or result.get('failure'):
+                    raise ValueError(reason)
+                raise ValueError('来源复核未通过，未生成成片。'+reason)
         if not final.is_file():
             with render_scratch(folder,len(v['ranges'])):
                 prepared=prepare_audio(self,v['audio_strength']) if v['audio_strength'] else None

@@ -238,7 +238,7 @@ def protect_semantic_overlaps(ledger, rows):
 
 def run(editor):
     from fine import mapped_cues
-    from fine_candidates import generate, timing_targets, intersects, merge_removed, execution_summary, reliable_words
+    from fine_candidates import generate, timing_targets, intersects, merge_removed, execution_summary, reliable_words, block_reason_counts
     from fine_story import build_story, decide, final_review
     from fine_gaps import candidates as gap_candidates
     from audio_identity import ENGINE_ID
@@ -339,9 +339,14 @@ def run(editor):
         auto_review={'schema':2,'suggested_removals':len(ledger),
             'reviewed_removals':sum(d['action']=='remove' for d in decisions),
             'blocked_removals':len(protected),'protected':protected,
+            'block_reasons':block_reason_counts(ledger),
             'applied_removals':sum(c['status']=='applied' for c in ledger),
             'source_duration':source_duration,'output_duration':version['duration'],
             'removed_duration':max(0.,source_duration-version['duration']),'final_story_review':combined})
+    from fine_alignment import summarize as alignment_summary
+    alignment = alignment_summary(editor.context)
+    if alignment['windows']:
+        version['alignment_summary'] = alignment
     # Minimum renderable retained spans can coalesce adjacent cuts. Derive the
     # receipt from the resulting ranges, so even those small joins are honest.
     from edit_ledger import refresh as refresh_ledger

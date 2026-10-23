@@ -44,10 +44,10 @@ const finePage = { hidden: true, innerHTML: '' };
 globalThis.document = { addEventListener() {}, getElementById: id => id === 'finePage' ? finePage : null };
 globalThis.window = { addEventListener() {} };
 globalThis.testBridge = { listeners: [], invoke: async () => {}, open: async () => null };
-const { bindImportedVideo, sameView, SubtitleDrafts, globalActivity } = await import(pathToFileURL(join(temporary, 'workspace-state.mjs')));
+const { bindImportedVideo, sameView, SubtitleDrafts, globalActivity, reviewFailureNote } = await import(pathToFileURL(join(temporary, 'workspace-state.mjs')));
 const { FineWorkspace } = await import(pathToFileURL(join(temporary, 'fine.mjs')));
 const { SegmentPlayer } = await import(pathToFileURL(join(temporary, 'segment-player.mjs')));
-const { cutResult, cutSummaryHtml, cutLedgerHtml, executionOutcome, cacheBudgetNote } = await import(pathToFileURL(join(temporary, 'fine-progress.mjs')));
+const { cutResult, cutSummaryHtml, cutLedgerHtml, executionOutcome, cacheBudgetNote, cacheBudgetHtml, alignmentNote } = await import(pathToFileURL(join(temporary, 'fine-progress.mjs')));
 const cues = [{ id: 1, start: 0, end: 1, text: '原字幕' }];
 const changed = [{ ...cues[0], text: '核对后的字幕' }];
 const project = (id, revision = 1) => ({ id, task_id: `task-${id}`, clip_id: 1,
@@ -184,8 +184,13 @@ test('storage failure keeps subtitle edits in the window and reports the failure
 
 test('global status includes background fine work and waiting queue entries', () => {
   assert.match(globalActivity([], [{ status: 'busy' }], []), /1 个细剪任务/);
+  assert.match(globalActivity([], [{ status: 'busy' }], []), /一次一项重任务/);
   assert.match(globalActivity([], [], [{ status: 'queued' }]), /1 项排队/);
   assert.equal(globalActivity([], [], []), '就绪');
+  assert.match(reviewFailureNote({ failed: 2, failure_reason: '模型不支持图片' }), /失败 2 段/);
+  assert.match(reviewFailureNote({ failed: 2, failure_reason: '模型不支持图片' }), /没有导出/);
+  assert.match(reviewFailureNote({ failed: 2, failure_reason: '模型不支持图片' }), /模型不支持图片/);
+  assert.equal(reviewFailureNote({ excluded: 1 }), '');
 });
 
 test('a selected audio track never silently starts playback from the original multi-track file', () => {
@@ -215,7 +220,8 @@ test('zero effective cuts report unchanged duration and the actual blocked decis
   assert.equal(result.suggested, 2); assert.equal(result.blocked, 2); assert.equal(result.applied, 0);
   const html = cutSummaryHtml(version, 17853.136, 18282.534);
   assert.match(html, /未产生有效精简/); assert.match(html, /实际应用 0 处/);
-  assert.match(html, /无法确认字尾，保留原声/); assert.doesNotMatch(html, /实际精简 60/);
+  assert.match(html, /无法确认字尾，保留原声/); assert.match(html, /无法确认字尾，保留原声 · 1 处/);
+  assert.match(html, /暂时无法定位 · 1 处/); assert.doesNotMatch(html, /实际精简 60/);
   assert.match(executionOutcome({ error: '', stage: '', status: 'idle', execution: { state: 'done', command: 'edit_auto' } }, true, result.unchanged), /处理结束/);
 });
 
@@ -263,6 +269,28 @@ test('a reviewed keep decision is retained without a misleading pending action o
   const legacy = { duration: 10, cut_ledger: [{ ...version.cut_ledger[0], decision: undefined }] };
   assert.match(cutLedgerHtml(legacy, 100), /已保留/);
   assert.match(cutLedgerHtml(legacy, 100, true), /待处理/);
+});
+
+test('alignment failures and repeated block reasons stay visible after some cuts apply', () => {
+  const version = { duration: 8, alignment_summary: {
+    windows: 4, complete: 1, unavailable: 2, failed: 1, invalid: 0, unsupported: 0, pending: 0, problem_windows: 3,
+    warnings: ['缺少字词对齐环境：未找到 .alignment-venv/bin/python。句内删除保持待确认。'],
+  }, cut_ledger: [
+    { id: 'kept', start: 101, end: 102, text: '就', reason: '重说', status: 'applied' },
+    { id: 'a', start: null, end: null, text: '嗯', reason: '语气词', status: 'blocked', block_reason: '缺少字词对齐环境：未找到 .alignment-venv/bin/python。句内删除保持待确认。' },
+    { id: 'b', start: null, end: null, text: '呃', reason: '语气词', status: 'blocked', block_reason: '缺少字词对齐环境：未找到 .alignment-venv/bin/python。句内删除保持待确认。' },
+  ] };
+  const result = cutResult(version, 100, 110);
+  assert.equal(result.applied, 1); assert.equal(result.blocked, 2); assert.equal(result.unchanged, false);
+  assert.equal(result.reasonGroups[0].count, 2);
+  assert.match(result.alignment, /检查了 4 个窗口/); assert.match(result.alignment, /组件缺失 2/);
+  assert.match(alignmentNote(version.alignment_summary), /\.alignment-venv\/bin\/python/);
+  const html = cutSummaryHtml(version, 100, 110);
+  assert.match(html, /实际精简/); assert.match(html, / · 2 处/); assert.match(html, /fine-alignment-note/);
+  assert.match(cacheBudgetHtml({ over_budget: true, message: '声音缓存 17.20 GB，已超过 16 GB 软预算。2 个受保护文件已保留。' }), /over-budget/);
+  assert.match(cacheBudgetHtml({ over_budget: true, message: '声音缓存 17.20 GB，已超过 16 GB 软预算。2 个受保护文件已保留。' }), /受保护/);
+  assert.equal(cacheBudgetHtml({}), '');
+  assert.equal(cacheBudgetHtml({ message: '' }), '');
 });
 
 test('partially deleted candidates show each effective cut rather than the full original candidate', () => {

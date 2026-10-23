@@ -29,7 +29,7 @@ export class ExecutionPanel {
   if(this.key!==key||!body.querySelector('.edit-agent-run')){
    this.key=key;
    const retainedOpen=body.querySelector<HTMLDetailsElement>('.edit-agent-requirements')?.open||false;
-   body.innerHTML=`<div class="edit-agent-run"><p class="edit-agent-intro">${queued?'任务已加入队列。':execution?.command==='edit_export'?'正在导出你的成片。':execution?.command==='edit_audio_sample'?'正在生成声音试听。':'正在按你的要求处理这个片段。'}</p>${older.length?`<details class="edit-agent-history"><summary>已完成 ${older.length} 个步骤</summary>${older.map(row).join('')}</details>`:''}<div class="edit-agent-steps">${visible.map(row).join('')}</div><span class="edit-agent-announcement" role="status" aria-live="polite">${esc(active?.title||'正在处理')}</span></div><details class="edit-agent-requirements" ${retainedOpen?'open':''}><summary>剪辑要求<span>查看选择</span></summary><div>${summary(options).map(s=>`<p><span>${esc(s.title)}</span>${esc(s.value)}</p>`).join('')}</div></details>`;
+   body.innerHTML=`<div class="edit-agent-run"><p class="edit-agent-intro">${queued?'任务已加入队列。一次只运行一项重任务，前面的任务结束后自动开始。':execution?.command==='edit_export'?'正在导出你的成片。':execution?.command==='edit_audio_sample'?'正在生成声音试听。':'正在按你的要求处理这个片段。'}</p>${older.length?`<details class="edit-agent-history"><summary>已完成 ${older.length} 个步骤</summary>${older.map(row).join('')}</details>`:''}<div class="edit-agent-steps">${visible.map(row).join('')}</div><span class="edit-agent-announcement" role="status" aria-live="polite">${esc(active?.title||'正在处理')}</span></div><details class="edit-agent-requirements" ${retainedOpen?'open':''}><summary>剪辑要求<span>查看选择</span></summary><div>${summary(options).map(s=>`<p><span>${esc(s.title)}</span>${esc(s.value)}</p>`).join('')}</div></details>`;
   }
   body.querySelectorAll<HTMLElement>('[data-execution-step]').forEach(el=>{
    const step=steps.find(s=>s.id===el.dataset.executionStep);if(!step)return;
@@ -65,7 +65,10 @@ export function executionOutcome(p:Snapshot,hasPreview=false,unchanged=false){
 }
 
 export type CutCandidate={id:string;start:number|null;end:number|null;text?:string;quote?:string;reason:string;kind?:string;status:string;decision?:'keep'|'remove'|'manual';block_reason?:string;effective_intervals?:{start:number;end:number}[]};
-export type CutResultVersion={duration:number;source_duration?:number;removed_duration?:number;cut_ledger?:CutCandidate[];candidate_ledger?:{suggested:number;blocked:number;applied:number;candidates:CutCandidate[]};auto_review?:{suggested_removals?:number;blocked_removals?:number;applied_removals?:number;reviewed_removals?:number;protected?:unknown[]};removed?:{start:number;end:number;reason:string;text:string;candidate_ids?:string[]}[]};
+export type AlignmentSummary={windows:number;complete:number;unavailable:number;failed:number;invalid:number;unsupported:number;pending:number;problem_windows:number;warnings?:string[]};
+export type BlockReason={reason:string;count:number};
+export type AudioStorage={over_budget?:boolean;over_soft_budget?:boolean;message?:string;cache_bytes?:number;cache_limit_bytes?:number;protected_bytes?:number;protected_files?:number;removed_bytes?:number};
+export type CutResultVersion={duration:number;source_duration?:number;removed_duration?:number;alignment_summary?:AlignmentSummary;cut_ledger?:CutCandidate[];candidate_ledger?:{suggested:number;blocked:number;applied:number;candidates:CutCandidate[]};auto_review?:{suggested_removals?:number;blocked_removals?:number;applied_removals?:number;reviewed_removals?:number;protected?:unknown[];block_reasons?:BlockReason[]};removed?:{start:number;end:number;reason:string;text:string;candidate_ids?:string[]}[]};
 const count=(value:unknown)=>typeof value==='number'&&Number.isFinite(value)?Math.max(0,Math.floor(value)):0;
 
 export function blockedReasonText(candidate:{block_reason?:string}){
@@ -99,14 +102,42 @@ export function cutResult(version:CutResultVersion,sourceStart:number,sourceEnd:
  const blocked=ledger?candidates.filter(c=>c.status==='blocked').length:count(version.auto_review?.blocked_removals??version.auto_review?.protected?.length);
  const suggested=ledger?candidates.length:count(version.auto_review?.suggested_removals??version.auto_review?.reviewed_removals??applied);
  const unchanged=removedDuration<.03;
+ const reasonGroups=candidates.length?blockReasonGroups(candidates):(version.auto_review?.block_reasons||[]);
  const blockedNote=blockedReasonSummary(candidates);
  const explanation=blockedNote||(unchanged?candidates.some(c=>c.status==='restored')?'删减内容已恢复，当前保留完整片段。':'当前要求下没有找到可安全删减的内容。':'');
- return {sourceDuration,outputDuration,removedDuration,suggested,blocked,applied,unchanged,explanation,candidates};
+ const alignment=alignmentNote(version.alignment_summary);
+ return {sourceDuration,outputDuration,removedDuration,suggested,blocked,applied,unchanged,explanation,candidates,reasonGroups,alignment};
+}
+
+export function blockReasonGroups(candidates:{status:string;block_reason?:string;reason?:string}[]):BlockReason[]{
+ const counts=new Map<string,number>();
+ for(const candidate of candidates){
+  if(candidate.status!=='blocked')continue;
+  const reason=blockedReasonText(candidate);
+  counts.set(reason,(counts.get(reason)||0)+1);
+ }
+ return [...counts.entries()].map(([reason,count])=>({reason,count}));
+}
+
+export function alignmentNote(summary?:AlignmentSummary){
+ if(!summary?.problem_windows)return '';
+ const problems:[string,number|undefined][]=[['组件缺失',summary.unavailable],['运行失败',summary.failed],['结果无效',summary.invalid],['窗口不支持',summary.unsupported],['未返回',summary.pending]];
+ const parts=problems.filter(([,n])=>!!n).map(([label,n])=>`${label} ${n}`);
+ const warnings=(summary.warnings||[]).map(item=>item.trim()).filter(Boolean).slice(0,3);
+ return `字词对齐检查了 ${summary.windows} 个窗口，完成 ${summary.complete||0} 个。${parts.join('，')}。${warnings.length?warnings.join('；')+'。':''}这些窗口没有当作可删切口，相关内容已保留。`;
+}
+
+export function cacheBudgetHtml(storage?:AudioStorage){
+ if(!storage?.message)return '';
+ const over=!!(storage.over_budget||storage.over_soft_budget);
+ return `<p class="fine-cache-note${over?' over-budget':''}" role="status">${esc(storage.message)}</p>`;
 }
 
 export function cutSummaryHtml(version:CutResultVersion,sourceStart:number,sourceEnd:number){
  const result=cutResult(version,sourceStart,sourceEnd);
- return `<div class="fine-cut-summary ${result.unchanged?'unchanged':''}" role="status"><strong>${result.unchanged?'未产生有效精简':`实际精简 ${result.removedDuration.toFixed(2)} 秒`}</strong><div class="fine-cut-counts"><span>候选 ${result.suggested} 处</span><span>已阻止 ${result.blocked} 处</span><span>实际应用 ${result.applied} 处</span></div>${result.explanation?`<p>${esc(result.explanation)}</p>`:''}</div>`;
+ const groups=result.reasonGroups||[];
+ const reasonList=groups.length?`<ul class="fine-block-reasons">${groups.slice(0,6).map(group=>`<li>${esc(group.reason)} · ${group.count} 处</li>`).join('')}${groups.length>6?`<li>另有 ${groups.length-6} 种原因</li>`:''}</ul>`:'';
+ return `<div class="fine-cut-summary ${result.unchanged?'unchanged':''}" role="status"><strong>${result.unchanged?'未产生有效精简':`实际精简 ${result.removedDuration.toFixed(2)} 秒`}</strong><div class="fine-cut-counts"><span>候选 ${result.suggested} 处</span><span>已阻止 ${result.blocked} 处</span><span>实际应用 ${result.applied} 处</span></div>${result.explanation?`<p>${esc(result.explanation)}</p>`:''}${reasonList}${result.alignment?`<p class="fine-alignment-note">${esc(result.alignment)}</p>`:''}</div>`;
 }
 
 const locatedInterval=(interval:{start:number|null;end:number|null})=>typeof interval.start==='number'&&Number.isFinite(interval.start)&&typeof interval.end==='number'&&Number.isFinite(interval.end)&&interval.end>interval.start;

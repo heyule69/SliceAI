@@ -56,6 +56,8 @@ class StorageTest(unittest.TestCase):
             self.assertTrue(active.exists())
             self.assertEqual(preview.read_bytes(), b'completed video')
             self.assertEqual(status['removed_bytes'], 100)
+            self.assertFalse(status['over_budget'])
+            self.assertIn('清理', status['message'])
 
     def test_capacity_limit_never_deletes_version_bound_analysis_assets(self):
         with tempfile.TemporaryDirectory() as td:
@@ -70,7 +72,11 @@ class StorageTest(unittest.TestCase):
             status = ensure_space(editor, folder, 20, allocate_bytes=0, limit_bytes=0)
             self.assertTrue(path.is_file())
             self.assertEqual(status['cache_bytes'], 100)
+            self.assertTrue(status['over_budget'])
             self.assertTrue(status['over_soft_budget'])
+            self.assertGreater(status['protected_bytes'], 0)
+            self.assertGreater(status['protected_files'], 0)
+            self.assertIn('受保护', status['message'])
             self.assertIn('软预算', status['message'])
             self.assertIn('被引用的处理音频', status['message'])
 

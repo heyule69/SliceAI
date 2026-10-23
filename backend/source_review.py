@@ -69,6 +69,16 @@ def validate_review(raw, sentences, clip):
     return result
 
 
+def failure_review(exc):
+    """A vision/API failure is a recorded hold-out, never a silent omission."""
+    detail = ' '.join(str(exc).split())[:500]
+    if '未导出' not in detail and '未放行' not in detail:
+        detail = '画面来源复核失败，该片段未导出。' + detail
+    kind = 'frames' if any(token in detail for token in ('抽帧', '画面提取', '候选画面')) else 'vision_api'
+    return {'version': VERSION, 'decision': 'failed', 'source': 'review_failed', 'failure': kind,
+            'reason': detail[:800], 'visual_evidence': [], 'streamer_evidence': []}
+
+
 def review_clip(runner, clip, sentences):
     if runner.task.get('prefs',{}).get('event_mode') and clip['end']-clip['start']>300:
         parts=[]; start=clip['start']

@@ -123,10 +123,14 @@ def generate(rows, options, clip):
         streams=timed_streams(row)
         if not streams:
             if row['id'] in timing_targets([row], options):
+                alignment = row.get('alignment') if isinstance(row.get('alignment'), dict) else {}
+                warning = alignment.get('warning') if isinstance(alignment.get('warning'), str) else ''
+                reason = warning.strip() or '缺少可靠字词起止；CTC 锚点不能作为切口'
                 candidates.append(_candidate(f"timing:{row['id']}", 'retakes' if 'retakes' in options['speech'] else 'fillers',
                     row, None, None, row['text'], status='blocked',
-                    block_reason='缺少可靠字词起止；CTC 锚点不能作为切口',
-                    evidence=[{'type': 'alignment', 'status': row.get('alignment', {}).get('status', 'unavailable')}]))
+                    block_reason=reason[:300],
+                    evidence=[{'type': 'alignment', 'status': alignment.get('status', 'unavailable'),
+                               'warning': warning.strip()[:300]}]))
             continue
         seen=set()
         for local,words,window_id in streams:
@@ -255,6 +259,19 @@ def merge_removed(candidates, clip):
             result.append({'start': a, 'end': b, 'kind': item['kind'], 'kinds': [item['kind']],
                            'reason': item['reason'], 'text': item['text'], 'candidate_ids': [item['id']]})
     return result
+
+
+def block_reason_counts(ledger):
+    counts = {}
+    for candidate in ledger:
+        if candidate.get('status') != 'blocked':
+            continue
+        reason = candidate.get('block_reason') or candidate.get('reason') or '未说明原因'
+        if not isinstance(reason, str) or not reason.strip():
+            reason = '未说明原因'
+        reason = reason.strip()
+        counts[reason] = counts.get(reason, 0) + 1
+    return [{'reason': reason, 'count': count} for reason, count in counts.items()]
 
 
 def execution_summary(clip, ranges, ledger):
