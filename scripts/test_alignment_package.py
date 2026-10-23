@@ -144,6 +144,31 @@ class AlignmentPackageTest(unittest.TestCase):
             self.assertIn(prefix + name, checksums)
             self.assertEqual(checksums[prefix + name], hashlib.sha256((self.root / 'release' / (prefix + name)).read_bytes()).hexdigest())
 
+    def test_required_signature_without_certificate_keeps_the_previous_release(self):
+        worker, old = self.source_build()
+        self.bundle(worker / 'alignment')
+        catalog_file = self.root / 'alignment-catalog.json'
+        catalog_file.write_text(json.dumps(self.catalog), encoding='utf-8')
+        with patch.object(release, 'verify'), patch.object(release, 'alignment_builder', return_value=builder), \
+                patch.object(builder, 'CATALOG_FILE', catalog_file), patch.dict('os.environ', {'SLICEAI_SIGN_PFX': ''}):
+            with self.assertRaisesRegex(ValueError, '不会生成证书'):
+                release.package(self.root, require_alignment=True, require_signature=True)
+        self.assertEqual(old.read_text(encoding='utf-8'), 'Keep previous release\n')
+        self.assertFalse((self.root / 'release/SliceAI_0.2.0_x64-setup.exe').exists())
+
+    def test_optional_sign_without_certificate_packages_the_unsigned_installer(self):
+        worker, old = self.source_build()
+        self.bundle(worker / 'alignment')
+        catalog_file = self.root / 'alignment-catalog.json'
+        catalog_file.write_text(json.dumps(self.catalog), encoding='utf-8')
+        with patch.object(release, 'verify'), patch.object(release, 'alignment_builder', return_value=builder), \
+                patch.object(builder, 'CATALOG_FILE', catalog_file), patch.dict('os.environ', {'SLICEAI_SIGN_PFX': ''}):
+            result = release.package(self.root, require_alignment=True, sign=True)
+        self.assertFalse(result['signature']['signed'])
+        self.assertIn('SmartScreen', result['signature']['smartscreen'])
+        self.assertEqual((self.root / 'release/SliceAI_0.2.0_x64-setup.exe').read_bytes(), b'fixture-installer')
+        self.assertFalse(old.exists())
+
     def test_damaged_copy_never_replaces_previous_release(self):
         worker, old = self.source_build()
         self.bundle(worker / 'alignment')

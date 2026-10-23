@@ -1,14 +1,47 @@
 # SliceAI 0.2
 
-Windows 录播切片客户端：先发现完整事件，再通过固定问答选择细剪要求。当前为开发验收版。
+Windows 录播切片客户端：先发现完整事件，再通过固定问答选择细剪要求。当前为开发验收版。产品只面向 Windows 10 / 11 x64，不提供 Linux 安装包。
+
+SliceAI 自己的代码使用 Apache-2.0，见 [LICENSE](LICENSE)。BandIt、MSST 推理适配、Qwen 对齐器和随包模型仍使用各自的上游许可，见 [NOTICE](NOTICE)。
+
+## 从这里开始
+
+安装、运行和验收以本文为准。下面三处是历史材料，不要拿来当作当前安装步骤：
+
+- [docs/README-v0.1.2.md](docs/README-v0.1.2.md)：0.1.2 说明，仍写着首次下载转写模型。
+- [docs/README-v0.2.md](docs/README-v0.2.md)：较早的 0.2 说明，细剪流程和交付方式已经过时。
+- [design/](design/README.md)：HTML 交互设计稿，不是当前产品界面。
+
+### 安装和运行
+
+正式交付物是安装包 `release/SliceAI_0.2.0_x64-setup.exe`，按安装向导安装后使用。这个文件不在 Git 仓库里。只有在 Windows 上用当前源码完成文末的构建，再执行 `npm run bundle` 和 `scripts/package-release.py` 之后，它才代表当前版本。
+
+2026-09-30 的源码复核和字词细剪改造没有替换当时已经存在的 `release/` 安装包。先前写过“当天已更新安装包，并包含字词细剪和三个离线工作进程”，与 [细剪改造记录](docs/fine-editing-redesign.md)、[复核记录](docs/review-2026-09-30.md) 矛盾。以那两份记录为准：那一轮没有重打安装包。之后的源码同样要重新构建，才会进入安装包。
+
+测试可以不打安装包。构建后直接运行 `src-tauri/target/release/sliceai.exe`，并保留旁边的整个 `worker` 文件夹。用 `npm run build:portable` 更新这个测试程序，它会跳过安装包压缩。确认测试结果后再生成正式安装包。`release/SliceAI-0.2.0/` 是收集脚本另存的免安装目录，只有重新收集后才代表当前源码。
+
+两种方式都需要 WebView2，不需要用户安装 Python 或 FFmpeg。安装包目前没有代码签名。未签名时 Windows SmartScreen 可能拦截并显示未知发布者。有证书之后的签名步骤见 [代码签名](docs/code-signing.md)。仓库不提供证书，也不会为了通过检查而生成一张。
+
+### 验收门槛
+
+合并请求上的 CI 只跑界面构建、Windows 后端回归和合成音频测试，不下载 SenseVoice、BandIt 或 Qwen 权重，也不调用真实 AI。可选的夜间任务和手动触发的 Fixture smoke 工作流只给仓库里的示例打分，不进入合并请求：
+
+```powershell
+python -X utf8 scripts/acceptance_report.py
+python -X utf8 scripts/benchmark.py listen --gold bench/listening-gold.example.json --proposals bench/listening-proposals.example.json
+```
+
+这两条命令对示例的 `data_kind` 是 `example_fixture`，`product_acceptance` 保持 false。真实长录播保持 not_measured。指标和发布前案例见 [验收基线](docs/acceptance.md)。
+
+### 隐私和密钥
+
+内容判断会把转写文本发给设置里填写的 API。如果附加了弹幕，事件识别还会发送对应时间段的弹幕。来源复核再发送每个候选最多 6 张缩略画面（JPEG，最长边不超过 768），不上传原视频文件，也不上传整段音频。降低背景音乐在本机完成，不调用该 API。
+
+API Key 只在 Windows 上保存：用当前 Windows 用户的 DPAPI（`CryptProtectData`）保护后，写入 SliceAI 自己的数据目录里的 `sliceai.sqlite3`。界面不会把已保存的密钥读回输入框。更换 API 地址的主机后，已保存的密钥会被清掉。非 Windows 系统上这个程序不会加密密钥，也不会把密钥写进数据库；保存密钥会直接失败。不要把“已用 Windows DPAPI 保护”理解成其他操作系统上也有加密。
+
+与 BilibiliLive 无数据、配置或密钥共享。
 
 ## 使用
-
-正式交付使用安装版：运行 `release/SliceAI_0.2.0_x64-setup.exe`，按安装向导安装后使用。2026-09-30 已更新此安装包，包含字词细剪改造、导出目录修复及三个离线工作进程。
-
-测试阶段使用免安装程序：当前构建可直接运行 `src-tauri/target/release/sliceai.exe`，保留旁边的整个 `worker` 文件夹。使用 `npm run build:portable` 更新测试程序，跳过安装包压缩；确认测试结果后再通过 `npm run bundle` 生成正式安装包。完整打包脚本另外收集的 `release/SliceAI-0.2.0/` 用于免安装测试，只有重新收集后才代表当前源码。
-
-支持 Windows 10 / 11 x64，需要 WebView2；两种方式都不需要用户安装 Python 或 FFmpeg。
 
 1. 左下角「设置」填写自己的 AI API 地址、模型和 Key。内容判断通过 API；转写在本地进行。SenseVoice INT8 转写模型及 Silero VAD 随软件内置，无需首次下载。
 2. 导入录播，可选附加 UTF-8 的 SRT/VTT 转写及 XML/JSON 弹幕。多音轨素材可选择要分析的音轨，默认第一音轨；转写、声音处理、预览和导出使用同一选择。选择内容偏好和来源过滤，开始查找事件。
@@ -29,8 +62,8 @@ Windows 录播切片客户端：先发现完整事件，再通过固定问答选
 
 ## 数据与当前验收范围
 
-- 使用 SliceAI 独立 SQLite 数据目录；Key 用 Windows DPAPI 加密。与 BilibiliLive 无数据、配置或密钥共享。
-- API 接收转写、可选弹幕；来源复核还会发送候选画面。声音处理完全本地，不调用 AI API。
+- 数据目录、API 发送的转写 / 可选弹幕 / 来源复核画面，以及密钥只在 Windows 上用 DPAPI 保护，见上文「隐私和密钥」。非 Windows 不加密、不保存密钥。与 BilibiliLive 无数据、配置或密钥共享。
+- 声音处理完全在本机完成，不调用 AI API。
 - 粗剪按完整事件识别，跨窗口接续并复核边界，无默认 12 段数量截断。来源不确定的结果单列；原素材未讲完的事件保留未完标记。
 - 后台耗时任务串行执行，支持取消；失败保留草稿和已完成结果。异常重启会恢复可操作状态，重新执行前保留已完成成片。视频原文件不修改，重复导出使用新文件名。
 - 媒体时间零点以首视频轨的 `start_time` 为基准；晚起音频补静音，PTS 空隙按媒体时间保留。导入字幕、弹幕仍应使用相对录播的时间。
@@ -95,11 +128,11 @@ npm run bundle
 
 构建需要 Rust MSVC 工具链、Visual Studio C++ Build Tools，FFmpeg / FFprobe 在 PATH 中；音频、ASR 和字词对齐分别使用独立 Python 环境。先构建各子进程，测试时执行 `npm run build:portable`，正式打包执行 `npm run bundle`。测试程序依赖相邻的完整 `worker` 目录；后台源码或模型变化后，需要先更新对应的冻结工作进程。对齐构建的 `--dry-run` 仅显示计划，`--verify-only` 检查已有冻结资源并明确报告未构建；发布预检校验本地模型、对齐运行文件及许可证。发布脚本不会下载模型，完整字词细剪包使用 `--require-alignment` 阻止漏包；已有发布目录会保留为 `build/release-previous-*` 备份。`npm run dev` 只预览界面，桌面本地操作使用 `npm run desktop`。
 
-BandIt 原项目采用 Apache-2.0，MSST 推理实现采用 MIT；本地适配说明和许可证保存在 `backend/bandit/`，完整包包含在 `worker/audio/licenses/`。独立对齐包的构建目标为 `worker/alignment/`，携带模型清单、逐文件校验清单、Qwen 的 Apache-2.0 许可证全文和安装 wheel 的第三方许可；模型卡声明 Apache-2.0，全文从 Qwen 软件 wheel 复制并标注来源。其他第三方组件见各 worker 的 `THIRD-PARTY-NOTICES.txt`。安装包未作代码签名。2026-09-30 已完成三个工作进程的冻结构建和离线运行检查，并在原路径更新 NSIS 安装包；真实剪辑质量与整场素材验收仍需继续。
+BandIt 原项目采用 Apache-2.0，MSST 推理实现采用 MIT；本地适配说明和许可证保存在 `backend/bandit/`，完整包包含在 `worker/audio/licenses/`。独立对齐包的构建目标为 `worker/alignment/`，携带模型清单、逐文件校验清单、Qwen 的 Apache-2.0 许可证全文和安装 wheel 的第三方许可；模型卡声明 Apache-2.0，全文从 Qwen 软件 wheel 复制并标注来源。其他第三方组件见各 worker 的 `THIRD-PARTY-NOTICES.txt`，项目级说明见 [NOTICE](NOTICE)。安装包未作代码签名；有证书时按 [代码签名](docs/code-signing.md) 操作，没有证书就保持未签名，并接受 SmartScreen 可能拦截。2026-09-30 的复核没有用当时的源码替换已有安装包。真实剪辑质量与整场素材验收仍需继续。
 
 ## 回归与质量性能基线
 
-GitHub Actions 分开运行前端构建/交互回归、Windows Python/DPAPI/FFmpeg 回归，以及独立音频环境的合成分块/重采样/缓存测试；CI 不下载大型模型、不调用真实 AI。
+GitHub Actions 在合并请求和 `main` 上分开运行前端构建/交互回归、Windows Python/DPAPI/FFmpeg 回归，以及独立音频环境的合成分块/重采样/缓存测试；这些检查不下载大型模型、不调用真实 AI。`.github/workflows/fixture-smoke.yml` 只在每天定时或手动触发时运行，给 `scripts/acceptance_report.py` 和 `scripts/benchmark.py listen` 的示例夹具打分，同样不下载模型、不调用 AI，也不挡住合并请求。
 
 现有自动回归覆盖后端 176 项、前端 26 项、构建脚本 23 项；其中主环境跳过的五项声音测试由独立音频环境验证。免安装工作进程收集新增两项回归，构建脚本 23 项已完整复跑。上述真实素材的预览、导出和机械检查另行记录，自动回归通过不代表主观剪辑质量或字幕已经合格。
 

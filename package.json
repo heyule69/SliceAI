@@ -1,5 +1,5 @@
 {
-  "name": "sliceai", "version": "0.2.0", "private": true, "type": "module",
+  "name": "sliceai", "version": "0.2.0", "private": true, "license": "Apache-2.0", "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
     "build": "tsc --noEmit && vite build",

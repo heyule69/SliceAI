@@ -373,6 +373,16 @@ test('repeated export clicks share one pending directory selection and create no
   });
 });
 
+test('settings copy names the API payload and limits key protection to Windows DPAPI', async () => {
+  const source = await readFile(resolve('src/main.ts'), 'utf8');
+  assert.match(source, /转写文本/);
+  assert.match(source, /弹幕/);
+  assert.match(source, /最多 6 张缩略画面/);
+  assert.match(source, /Windows DPAPI|当前用户的 DPAPI/);
+  assert.match(source, /其他系统不会加密保存密钥/);
+  assert.doesNotMatch(source, /已加密保存/);
+});
+
 test('a rejected directory picker releases the selection lock and allows a fresh export', async () => {
   const directory = 'D:\\Exports\\retry'; let attempts = 0;
   await withExportWorkspace(async () => {

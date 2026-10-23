@@ -3,6 +3,7 @@ name = "sliceai"
 version = "0.2.0"
 description = "Automatic livestream highlight clipping"
 authors = ["SliceAI"]
+license = "Apache-2.0"
 edition = "2021"
 
 [build-dependencies]

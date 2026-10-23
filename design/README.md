@@ -1,3 +1,5 @@
+> 历史交互设计稿，不是当前产品界面，也不能当作安装或验收说明。当前界面在仓库根目录 `index.html` 与 `src/`。安装、运行和验收见 [README](../README.md)。
+
 # SliceAI · 第二版 HTML 交互设计稿
 
 直接打开 `index.html` 即可使用，不依赖构建工具或外部网络服务。需要保留同目录的 CSS、JavaScript 和 assets。

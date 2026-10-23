@@ -1,0 +1,39 @@
+name: Fixture smoke
+
+# Optional. Pull requests do not run this workflow. It scores committed example
+# fixtures only: no SenseVoice, BandIt, or Qwen weights, and no live AI API.
+on:
+  schedule:
+    - cron: '30 17 * * *'
+  workflow_dispatch:
+    inputs:
+      run_fixture_smoke:
+        description: Score the committed acceptance and listening examples
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  examples:
+    if: github.event_name == 'schedule' || inputs.run_fixture_smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, node24
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0, node24
+        with:
+          python-version: '3.11'
+      - name: Acceptance checklist on example fixtures
+        run: python -X utf8 scripts/acceptance_report.py --output test-results/acceptance/checklist.json
+      - name: Listening gold on example fixtures
+        run: python -X utf8 scripts/benchmark.py listen --gold bench/listening-gold.example.json --proposals bench/listening-proposals.example.json --report test-results/listening/example.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1, node24
+        if: always()
+        with:
+          name: fixture-smoke
+          path: |
+            test-results/acceptance/checklist.json
+            test-results/listening/example.json
+          retention-days: 14
