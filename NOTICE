@@ -1,0 +1,34 @@
+SliceAI
+Copyright 2026 SliceAI contributors
+
+The Apache-2.0 terms in LICENSE apply to SliceAI's own source in this
+repository. Third-party components keep their upstream licenses. LICENSE does
+not relicense them.
+
+BandIt
+  Karn N. Watcharasupat and contributors
+  Apache-2.0
+  https://github.com/kwatcharasupat/bandit
+  Local inference notes: backend/bandit/NOTICE.txt
+  License text: backend/bandit/LICENSE-Apache-2.0.txt
+
+Music-Source-Separation-Training inference adaptation
+  Copyright (c) 2024 Roman Solovyev (ZFTurbo)
+  MIT
+  https://github.com/ZFTurbo/Music-Source-Separation-Training
+  License text: backend/bandit/LICENSE-MIT.txt
+
+Qwen3-ForcedAligner-0.6B and qwen-asr
+  Copyright 2026 The Alibaba Qwen team
+  Apache-2.0
+  Weights are not stored in this repository. A built alignment worker copies
+  the upstream license into worker/alignment/.
+
+SenseVoice, sherpa-onnx, and Silero VAD
+  Fixed versions, checksums, and upstream license links live in
+  scripts/model-assets/. Weights are not stored in this repository.
+
+Packaged workers
+  Built packages add worker/THIRD-PARTY-NOTICES.txt and
+  worker/audio/THIRD-PARTY-NOTICES.txt. Those files are produced at build
+  time and are not a substitute for the notices above.
