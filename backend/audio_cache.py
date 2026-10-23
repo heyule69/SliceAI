@@ -9,6 +9,19 @@ from pathlib import Path
 
 CACHE_LIMIT_BYTES = 16 * 1024 ** 3
 SPACE_RESERVE_BYTES = 256 * 1024 ** 2
+SOFT_BUDGET_NOTE = (
+    '这是软预算，不是磁盘配额。版本、试听和已保存成片引用的文件会保留，'
+    '所以缓存可以超过预算；超过时只清理没有被引用的处理音频。'
+)
+
+
+def budget_message(cache_bytes, limit_bytes):
+    """User-facing note when protected files keep the cache above its soft budget."""
+    if cache_bytes <= limit_bytes:
+        return ''
+    gib = 1024 ** 3
+    return (f'声音缓存约 {cache_bytes / gib:.2f} GiB，已经超过 {limit_bytes / gib:.2f} GiB 软预算。'
+            + SOFT_BUDGET_NOTE)
 
 
 def canonical(value):
@@ -226,11 +239,16 @@ def ensure_space(editor, folder, seconds, *, raw_ready=False, stem_ready=False,
         if not failed:
             manifest.unlink(missing_ok=True)
         free = shutil.disk_usage(folder).free
+    cache_bytes = max(0, total)
     editor.p['audio_storage'] = {'seconds': seconds, 'estimated_additional_bytes': needed,
-                               'free_bytes': free, 'cache_bytes': max(0, total),
-                               'cache_limit_bytes': limit_bytes, 'removed_bytes': removed}
+                               'free_bytes': free, 'cache_bytes': cache_bytes,
+                               'cache_limit_bytes': limit_bytes, 'removed_bytes': removed,
+                               'soft_budget': True,
+                               'over_soft_budget': cache_bytes > limit_bytes,
+                               'message': budget_message(cache_bytes, limit_bytes)}
     if free < needed + reserve:
         gb = 1024 ** 3
-        raise ValueError(f'声音处理空间不足：预计另需 {needed/gb:.2f} GB，当前可用 {free/gb:.2f} GB；'
-                         '请释放空间或缩短事件后重试。已保存成片与被引用音频均保留。')
+        raise ValueError(f'声音处理空间不足：预计另需 {needed/gb:.2f} GB，当前可用 {free/gb:.2f} GB。'
+                         '请释放磁盘空间或缩短事件后重试。已保存成片和被引用的音频都保留。'
+                         '16 GiB 只是声音缓存的软预算，不能代替磁盘剩余空间。')
     return editor.p['audio_storage']

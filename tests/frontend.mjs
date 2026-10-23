@@ -47,7 +47,7 @@ globalThis.testBridge = { listeners: [], invoke: async () => {}, open: async () 
 const { bindImportedVideo, sameView, SubtitleDrafts, globalActivity } = await import(pathToFileURL(join(temporary, 'workspace-state.mjs')));
 const { FineWorkspace } = await import(pathToFileURL(join(temporary, 'fine.mjs')));
 const { SegmentPlayer } = await import(pathToFileURL(join(temporary, 'segment-player.mjs')));
-const { cutResult, cutSummaryHtml, cutLedgerHtml, executionOutcome } = await import(pathToFileURL(join(temporary, 'fine-progress.mjs')));
+const { cutResult, cutSummaryHtml, cutLedgerHtml, executionOutcome, cacheBudgetNote } = await import(pathToFileURL(join(temporary, 'fine-progress.mjs')));
 const cues = [{ id: 1, start: 0, end: 1, text: '原字幕' }];
 const changed = [{ ...cues[0], text: '核对后的字幕' }];
 const project = (id, revision = 1) => ({ id, task_id: `task-${id}`, clip_id: 1,
@@ -371,6 +371,28 @@ test('repeated export clicks share one pending directory selection and create no
     waiting.resolve('D:\\Exports\\chosen'); await Promise.all([first, second]);
     assert.equal(count, 1); assert.equal(modal.shown, 1); assert.deepEqual(requests, []);
   });
+});
+
+test('blocked candidates state why they stayed in the cut instead of only being retained', () => {
+  const version = { duration: 10, cut_ledger: [
+    { id: 'overlap', start: 103, end: 105, text: '后续回应', reason: '重复表达', status: 'blocked', block_reason: '与需要保留的语音时间重叠' },
+    { id: 'unnamed', start: 106, end: 107, text: '嗯', reason: '语气词', status: 'blocked', block_reason: '' },
+    { id: 'kept-story', start: 108, end: 109, text: '结局', reason: '故事的回应需要保留', status: 'suggested', decision: 'keep' },
+  ] };
+  const summary = cutSummaryHtml(version, 100, 110);
+  assert.match(summary, /被阻止 2 处，这些内容仍留在成片里：与需要保留的语音时间重叠；未写出具体原因，这段原声已保留/);
+  const html = cutLedgerHtml(version, 100);
+  assert.match(html, /被阻止：与需要保留的语音时间重叠。这段没有从成片删掉。/);
+  assert.match(html, /被阻止：未写出具体原因，这段原声已保留。这段没有从成片删掉。/);
+  assert.match(html, /已保留/);
+  assert.equal((html.match(/被阻止/g) || []).length, 4);
+});
+
+test('the audio cache note explains the 16 GiB soft budget and a measured overrun', () => {
+  assert.match(cacheBudgetNote(null), /软预算 16 GiB/);
+  assert.match(cacheBudgetNote(null), /可以超过 16 GiB/);
+  assert.match(cacheBudgetNote({ over_soft_budget: true, message: '声音缓存约 18.00 GiB，已经超过 16.00 GiB 软预算。' }), /18\.00 GiB/);
+  assert.equal(cacheBudgetNote({ over_soft_budget: false, message: '' }), cacheBudgetNote(null));
 });
 
 test('settings copy names the API payload and limits key protection to Windows DPAPI', async () => {

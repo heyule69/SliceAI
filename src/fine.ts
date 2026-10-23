@@ -1,5 +1,5 @@
 import './fine-progress.css';
-import { ExecutionPanel, executionOutcome, executionIssue, cutResult, cutSummaryHtml, cutLedgerHtml, restorableCandidate, type Execution, type CutResultVersion } from './fine-progress';
+import { ExecutionPanel, executionOutcome, executionIssue, cutResult, cutSummaryHtml, cutLedgerHtml, restorableCandidate, cacheBudgetNote, type Execution, type CutResultVersion } from './fine-progress';
 import { SegmentPlayer, type Playback } from './segment-player';
 import { invoke, convertFileSrc, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -10,7 +10,7 @@ import { sameView, SubtitleDrafts, cueFingerprint, type ViewTicket, type QueueEn
 type Cue={id:number;start:number;end:number;text:string};
 type Range={start:number;end:number;reason:string};
 type Version=CutResultVersion&{id:string;number:number;confirmed:boolean;summary:string;ranges:Range[];reordered:boolean;subtitles:boolean;audio_strength:number;audio_engine?:string|null;cues:Cue[];preview:string;caption_review?:{needs_review:number[]}};
-type Project={execution?:Execution;source_preview?:{path:string};edit_options?:EditOptions;question_step?:number;id:string;revision:number;task_id:string;clip_id:number;title:string;status:string;stage:string;error:string;source_start:number;source_end:number;messages:{role:string;content:string}[];versions:Version[];current_version:string|null;audio_sample?:{engine?:string;original:{path:string};processed:{path:string}};exports:{id:string;path:string;version_id:string}[]};
+type Project={execution?:Execution;source_preview?:{path:string};edit_options?:EditOptions;question_step?:number;id:string;revision:number;task_id:string;clip_id:number;title:string;status:string;stage:string;error:string;source_start:number;source_end:number;messages:{role:string;content:string}[];versions:Version[];current_version:string|null;audio_sample?:{engine?:string;original:{path:string};processed:{path:string}};audio_storage?:{over_soft_budget?:boolean;message?:string};exports:{id:string;path:string;version_id:string}[]};
 const AUDIO_ENGINE='bandit-plus-dnr-11.47-speech-v1';
 const esc=(s:unknown)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 const $=<T extends HTMLElement=HTMLElement>(id:string)=>document.getElementById(id) as T;
@@ -189,7 +189,7 @@ export class FineWorkspace {
    $('fineCues')?.addEventListener('input',()=>this.collectCues());
   }else if(this.tab==='audio'){
    const sample=p.audio_sample?.engine===AUDIO_ENGINE?p.audio_sample:null;
-   detail.innerHTML=`<div class="fine-plan-top"><b>降低背景音乐</b><span>本地处理 · 试听可选</span></div><p class="fine-summary">直接应用到方案，或先试听效果。</p><button class="secondary-button" data-fine-action="sample" ${busy?'disabled':''}>生成 20 秒试听</button>${sample?`<div class="fine-audio"><label>原声<audio controls preload="none" src="${esc(convertFileSrc(sample.original.path))}"></audio></label><label>处理后<audio controls preload="none" src="${esc(convertFileSrc(sample.processed.path))}"></audio></label></div>`:''}<div class="fine-plan-actions"><label>强度 <input id="fineStrength" type="range" min="0" max="1" step="0.1" value="${v?.audio_engine===AUDIO_ENGINE&&v.audio_strength?v.audio_strength:1}"></label><button class="primary-button" data-fine-action="apply-audio" ${busy||!v?'disabled':''}>应用到方案</button></div><button class="text-button" data-fine-action="original-audio" ${busy||!v?.audio_strength?'disabled':''}>恢复原声</button>`;
+   detail.innerHTML=`<div class="fine-plan-top"><b>降低背景音乐</b><span>本地处理 · 试听可选</span></div><p class="fine-summary">直接应用到方案，或先试听效果。</p><p class="fine-summary">${esc(cacheBudgetNote(p.audio_storage))}</p><button class="secondary-button" data-fine-action="sample" ${busy?'disabled':''}>生成 20 秒试听</button>${sample?`<div class="fine-audio"><label>原声<audio controls preload="none" src="${esc(convertFileSrc(sample.original.path))}"></audio></label><label>处理后<audio controls preload="none" src="${esc(convertFileSrc(sample.processed.path))}"></audio></label></div>`:''}<div class="fine-plan-actions"><label>强度 <input id="fineStrength" type="range" min="0" max="1" step="0.1" value="${v?.audio_engine===AUDIO_ENGINE&&v.audio_strength?v.audio_strength:1}"></label><button class="primary-button" data-fine-action="apply-audio" ${busy||!v?'disabled':''}>应用到方案</button></div><button class="text-button" data-fine-action="original-audio" ${busy||!v?.audio_strength?'disabled':''}>恢复原声</button>`;
   }
   $('fineSubs')?.addEventListener('change',()=>void this.guard(()=>this.queue('edit_update',{subtitles:$<HTMLInputElement>('fineSubs').checked})));
   this.video();
